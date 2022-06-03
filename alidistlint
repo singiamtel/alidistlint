@@ -11,9 +11,9 @@ import re
 from subprocess import run, PIPE
 import sys
 import tempfile
-from typing import Callable, Iterable, NamedTuple, TextIO
+from typing import Any, Callable, Iterable, NamedTuple, TextIO
 
-from schema import Schema, Use, And, Or, Optional, SchemaError
+import cerberus
 import yaml
 from yaml.error import MarkedYAMLError, YAMLError
 
@@ -41,6 +41,9 @@ YAMLLINT_LINE_PATTERN: re.Pattern = re.compile(r'''
 \( (?P<code>    [^)]+ ) \) $   # symbolic error code from yamllint
 ''', re.VERBOSE)
 
+
+ValidationErrorList = list[str | dict[Any, 'ValidationErrorList']]
+ValidationErrorTree = str | dict[Any, ValidationErrorList] | ValidationErrorList
 
 FileParts = dict[str, tuple[str, int, str | None]]
 '''Map temporary file name to original file name and line offset.
@@ -89,6 +92,12 @@ ERROR_FORMATTERS: dict[str, Callable[[Error], str]] = {
 }
 
 
+class MockMark(NamedTuple):
+    '''Used if a key is not present in the YAML.'''
+    line: int = 0
+    column: int = 0
+
+
 def split_files(temp_dir: str, input_files: Iterable[TextIO]) \
         -> tuple[FileParts, FileParts]:
     '''Split every given file into its YAML header and script part.'''
@@ -99,14 +108,15 @@ def split_files(temp_dir: str, input_files: Iterable[TextIO]) \
         recipe = input_file.read()
         # Get the first byte of the '---\n' line (excluding the newline before it).
         separator_position = recipe.find('\n---\n') + 1
-        yaml = recipe[:separator_position]
+        yaml_text = recipe[:separator_position]
         with open(f'{temp_dir}/{orig_basename}.head.yaml', 'w') as headerf:
-            headerf.write(yaml)
-            header_parts[headerf.name] = input_file.name, 0, yaml
+            headerf.write(yaml_text)
+            header_parts[headerf.name] = input_file.name, 0, yaml_text
         with open(f'{temp_dir}/{orig_basename}.script.sh', 'w') as scriptf:
             scriptf.write(recipe[separator_position + 4:])
             # Add 1 to line offset for the separator line.
-            script_parts[scriptf.name] = input_file.name, yaml.count('\n') + 1, None
+            script_parts[scriptf.name] = \
+                input_file.name, yaml_text.count('\n') + 1, None
     return header_parts, script_parts
 
 
@@ -161,58 +171,208 @@ def yamllint(headers: FileParts) -> Iterable[Error]:
 
 
 class TrackedLocationLoader(yaml.loader.SafeLoader):
-    '''Load YAML documents while keeping track of keys' line and column.'''
+    '''Load YAML documents while keeping track of keys' line and column.
+
+    We need to override construct_sequence to track the location of list items,
+    and construct_mapping to track the location of keys.
+
+    See also: https://stackoverflow.com/q/13319067
+    '''
+    def construct_sequence(self, node, deep=False):
+        sequence = super().construct_sequence(node, deep)
+        sequence.append([item_node.start_mark for item_node in node.value])
+        return sequence
+
     def construct_mapping(self, node, deep=False):
         mapping = super().construct_mapping(node, deep=deep)
-        mapping['_linter_start_mark'] = node.start_mark
+        mapping['_locations'] = {
+            # Keys aren't necessarily strings, so parse them in YAML.
+            self.construct_object(key_node): key_node.start_mark
+            for key_node, _ in node.value
+        }
         return mapping
 
+    @staticmethod
+    def remove_trackers(data):
+        if isinstance(data, dict):
+            return {key: TrackedLocationLoader.remove_trackers(value)
+                    for key, value in data.items()
+                    if key != '_locations'}
+        if isinstance(data, list):
+            return [TrackedLocationLoader.remove_trackers(value)
+                    for value in data[:-1]]
+        return data
 
-def get_schema_for_file(file_name: str) -> Schema:
+
+def get_schema_for_file(file_name: str) -> dict:
     '''Construct a schema to validate the YAML header of the given file.'''
-    def package_name_matches(package: str) -> bool:
-        return f'{package.lower()}.sh' == os.path.basename(file_name)
-    package_name = And(str, package_name_matches,
-                       error=('package name must match the file name '
-                              'case-insensitively'))
+    def package_name_matches(field, value, error):
+        basename = os.path.basename(file_name)
+        if f'{value.lower()}.sh' != basename:
+            error(field, f'must match the file name {basename!r} '
+                  'case-insensitively, excluding the .sh')
 
-    def is_git_url(string: str) -> bool:
-        return (string.startswith('https://') or
-                string.startswith('http://') or
-                string.startswith('git://'))
-    git_url = And(str, is_git_url,
-                  error=('source and/or write_repo must be a git URL '
-                         '(https://, http://, or git://)'))
-
-    def is_valid_require(spec: str) -> bool:
-        _, sep, arch_re = spec.partition(':')
+    def is_valid_require(field, value, error):
+        _, sep, arch_re = value.partition(':')
         if sep:
-            # Raise a re.error if the regex is invalid.
-            re.compile(arch_re)
-        return True
-    requires = And(str, is_valid_require)
+            try:
+                re.compile(arch_re)
+            except re.error as exc:
+                error(field, f'invalid architecture regex after colon: {exc}')
 
-    package_schema = Schema({
-        'package': package_name,
-        Optional('version'): str,
-        Optional('tag'): str,
-        Optional('source'): git_url,
-        Optional('write_repo'): git_url,
-        Optional('requires'): [requires],
-        Optional('build_requires'): [requires],
-        Optional('env'): dict[str, str],
-        Optional('incremental_recipe'): str,
-        Optional('valid_defaults'): list[str],
-        Optional('prepend_path'): dict[str, str | list[str]],
-        Optional('append_path'): dict[str, str | list[str]],
-    })
+    def environment_schema(allow_list_values=False):
+        return {
+            'type': 'dict',
+            'keysrules': {
+                'type': 'string',
+                'regex': r'^[a-zA-Z_][a-zA-Z0-9_]+$',
+            },
+            'valuesrules': {
+                'anyof': [
+                    {'type': 'string'},
+                    {'type': 'list', 'schema': {'type': 'string'}},
+                ],
+            } if allow_list_values else {'type': 'string'},
+        }
 
-    if file_name.startswith('defaults-'):
-        return Schema({
-            'package': package_name,
-        })
+    def version_string_ok(field, value, error):
+        if not file_name.startswith('defaults-') and \
+           '%(defaults_upper)s' in value:
+            error(field, f'cannot use %(defaults_upper)s in non-defaults recipe')
 
-    return package_schema
+    def is_valid_regex(field, value, error):
+        try:
+            re.compile(value)
+        except re.error as exc:
+            error(field, f'invalid regex: {exc}')
+
+    def is_relative_toplevel_path(field, value, error):
+        if value.startswith('/'):
+            error(field, 'expecting a relative path')
+        if '/' in value:
+            error(field, 'expecting a toplevel path (i.e. without slashes)')
+
+    requires = {
+        'type': 'list',
+        'schema': {
+            'type': 'string',
+            'check_with': is_valid_require,
+        }
+    }
+
+    git_url = {
+        'type': 'string',
+        'regex': r'^(https?|git)://.*$',
+    }
+
+    environment = environment_schema(allow_list_values=False)
+    path_environment = environment_schema(allow_list_values=True)
+
+    # This contains most keys, and can be used in other packages' override:.
+    override_package = {
+        'version': {'type': 'string', 'check_with': version_string_ok},
+        'tag': {'type': 'string'},
+        'source': git_url,
+        'write_repo': git_url,
+        'requires': requires,
+        'build_requires': requires,
+        'env': environment,
+        'valid_defaults': {'type': 'list', 'schema': {'type': 'string'}},
+        'prepend_path': path_environment,
+        'append_path': path_environment,
+        'force_rebuild': {'type': 'boolean'},
+        'incremental_recipe': {'type': 'string'},
+        'prefer_system': {'type': 'string', 'check_with': is_valid_regex},
+        'prefer_system_check': {'type': 'string'},
+        'system_requirement': {
+            'type': 'string',
+            'check_with': is_valid_regex,
+            'dependencies': ('system_requirement_check',),
+        },
+        'system_requirement_check': {
+            'type': 'string',
+            'dependencies': ('system_requirement',),
+        },
+        'system_requirement_missing': {
+            'type': 'string',
+            'dependencies': ('system_requirement',),
+        },
+        'relocate_paths': {
+            'type': 'list',
+            'schema': {
+                'type': 'string',
+                'check_with': is_relative_toplevel_path,
+            },
+        },
+    }
+
+    return {
+        'package': {
+            'required': True,
+            'type': 'string',
+            'check_with': package_name_matches,
+        },
+        **override_package,
+        # At the top level, the version key is required.
+        'version': {
+            'required': True,
+            'type': 'string',
+            'check_with': version_string_ok,
+        },
+        'disable': {'type': 'list', 'schema': {'type': 'string'}},
+        'overrides': {
+            'type': 'dict',
+            'keysrules': {'type': 'string'},
+            'valuesrules': {'type': 'dict', 'schema': override_package},
+        },
+    }
+
+
+def position_of_key(tagged_object: dict,
+                    path: tuple[str | int, ...]) -> tuple[int, int]:
+    '''Find the line and column numbers of the specified key.'''
+    cur_object_parent = tagged_object
+    for path_element in path[:-1]:
+        try:
+            cur_object_parent = cur_object_parent[path_element]
+        except KeyError:
+            print(path_element, cur_object_parent)
+            raise
+    if isinstance(cur_object_parent, dict):
+        direct_parent = cur_object_parent['_locations']
+    elif isinstance(cur_object_parent, list):
+        direct_parent = cur_object_parent[-1]
+    else:
+        raise TypeError(cur_object_parent)
+    try:
+        mark = direct_parent[path[-1]]
+        return mark.line + 1, mark.column + 1
+    except KeyError:
+        # The key is not present, but probably required.
+        return 1, 0
+
+
+def emit_validation_errors(error_tree: ValidationErrorTree,
+                           tagged_validated_object: dict,
+                           file_name: str,
+                           path: tuple[str | int, ...] = ()) -> Iterable[Error]:
+    '''Parse any validation errors from a cerberus validator.'''
+    if isinstance(error_tree, dict):
+        for key, suberrors in error_tree.items():
+            yield from emit_validation_errors(
+                suberrors, tagged_validated_object, file_name, path + (key,),
+            )
+    elif isinstance(error_tree, list):
+        for subtree in error_tree:
+            yield from emit_validation_errors(subtree, tagged_validated_object,
+                                              file_name, path)
+    elif isinstance(error_tree, str):
+        line, column = position_of_key(tagged_validated_object, path)
+        dotted_subpath = '.'.join(map(str, path))
+        yield Error('error', f'{dotted_subpath}: {error_tree} [ali:schema]',
+                    file_name, line, column)
+    else:
+        raise TypeError(f'cannot handle {error_tree!r}')
 
 
 def header_lint(headers: FileParts) -> Iterable[Error]:
@@ -222,16 +382,18 @@ def header_lint(headers: FileParts) -> Iterable[Error]:
         return Error('error', f'{message} [ali:{code}]',
                      orig_file_name, rel_line + line_offset, column)
 
-    def line_of(key_name: str) -> int:
-        '''Find a key in yaml_data and return its relative line number.'''
-        return yaml_data[key_name]['_linter_start_mark'].line + 1
-
     for header in headers.values():  # we don't need the temporary file
         orig_file_name, line_offset, yaml_text = header
-        assert yaml_text is not None, 'expected YAML text'
-        yaml_lines = yaml_text.splitlines()
+        if not yaml_text:
+            yield make_error('metadata not found or empty '
+                             "(is the '\\n---\\n' separator present?)",
+                             'empty', 1, 0)
+            return
+
+        # Parse the source YAML, keeping track of the locations of keys.
         try:
-            yaml_data = yaml.load(io.StringIO(yaml_text), TrackedLocationLoader)
+            tagged_data = yaml.load(io.StringIO(yaml_text),
+                                    TrackedLocationLoader)
         except MarkedYAMLError as exc:
             mark = exc.problem_mark
             yield make_error(f'parse error: {exc.problem}', 'parse',
@@ -239,31 +401,72 @@ def header_lint(headers: FileParts) -> Iterable[Error]:
                              0 if mark is None else mark.column)
             continue
         except YAMLError as exc:
-            yield make_error('unknown error parsing YAML', 'parse-error', 1, 0)
+            yield make_error(f'unknown error parsing YAML: {exc}',
+                             'parse', 1, 0)
             continue
-        if not isinstance(yaml_data, dict):
-            yield make_error('recipe metadata must be a dictionary',
+
+        # Run schema validation against the "clean" data, without source
+        # location markers.
+        pure_data = TrackedLocationLoader.remove_trackers(tagged_data)
+
+        # Basic sanity check.
+        if not isinstance(pure_data, dict):
+            yield make_error('recipe metadata must be a dictionary '
+                             f'(got a {type(pure_data)})',
                              'toplevel-nondict', 1, 0)
             continue
 
         # Make sure values have the types that they should.
-        try:
-            get_schema_for_file(orig_file_name).validate(yaml_data)
-        except SchemaError as exc:
-            yield make_error(' '.join(
-                custom or auto
-                for custom, auto in zip(exc.errors, exc.autos)
-                if custom or auto
-            ), 'schema', 1, 0)
-            continue
+        validator = cerberus.Validator(get_schema_for_file(orig_file_name))
+        if not validator.validate(pure_data):
+            yield from emit_validation_errors(validator.errors, tagged_data,
+                                              orig_file_name)
 
-        match yaml_data.keys():
-            case ['package', 'version', 'tag', *_]:
-                pass
-            case ['package', 'tag', other_keys]:
-                if 'version' in other_keys:
-                    pass
-                    # yield make_error()
+        # Make sure the order of the most important keys is correct.
+        packages_to_check: list[dict] = [tagged_data]
+        if isinstance(tagged_data.get('overrides'), dict):
+            packages_to_check.extend(tagged_data['overrides'].values())
+
+        for data in packages_to_check:
+            keys = list(data.keys())
+            if 'requires' in data and 'build_requires' in data and \
+               keys.index('requires') > keys.index('build_requires'):
+                for key in ('requires', 'build_requires'):
+                    yield make_error(
+                        'requires must come before build_requires',
+                        'key-order', *position_of_key(data, (key,)),
+                    )
+            if 'package' in data:
+                if keys.index('package') != 0:
+                    yield make_error(
+                        'package: must be the first key in the file',
+                        'key-order', *position_of_key(data, ('package',)),
+                    )
+                if 'version' in data and keys.index('version') != 1:
+                    yield make_error(
+                        'version: must be the second key in the file '
+                        '(after package)',
+                        'key-order', *position_of_key(data, ('version',)),
+                    )
+                if 'tag' in data and keys.index('tag') != 2:
+                    yield make_error(
+                        'tag: must be the third key in the file '
+                        '(after version)',
+                        'key-order', *position_of_key(data, ('key',)),
+                    )
+            else:
+                if 'version' in data and keys.index('version') != 0:
+                    yield make_error(
+                        'version: must be the first key in the override '
+                        'declaration',
+                        'key-order', *position_of_key(data, ('version',)),
+                    )
+                if 'tag' in data and keys.index('tag') != 1:
+                    yield make_error(
+                        'tag: must be the second key in the override '
+                        'declaration (after version)',
+                        'key-order', *position_of_key(data, ('key',)),
+                    )
 
 
 def main(args: Namespace) -> int:
