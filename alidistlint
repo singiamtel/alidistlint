@@ -1,0 +1,306 @@
+#!/usr/bin/env python3
+
+'''Lint alidist recipes using yamllint and shellcheck.'''
+
+from argparse import ArgumentParser, FileType, Namespace
+import io
+import itertools
+import json
+import os.path
+import re
+from subprocess import run, PIPE
+import sys
+import tempfile
+from typing import Callable, Iterable, NamedTuple, TextIO
+
+from schema import Schema, Use, And, Or, Optional, SchemaError
+import yaml
+from yaml.error import MarkedYAMLError, YAMLError
+
+
+GCC_LEVELS: dict[str, str] = {
+    'error': 'error',
+    'warning': 'warning',
+    'info': 'note',
+    'style': 'note',
+}
+
+GITHUB_LEVELS: dict[str, str] = {
+    'error': 'error',
+    'warning': 'warning',
+    'info': 'notice',
+    'style': 'notice',
+}
+
+YAMLLINT_LINE_PATTERN: re.Pattern = re.compile(r'''
+^  (?P<fname>   .+?   )    :   # file name, be non-greedy
+   (?P<line>    \d+   )    :   # line number
+   (?P<column>  \d+   )    :\s # column number
+\[ (?P<level>   \w+   ) \] \s  # error level (error or warning)
+   (?P<message> .+    )    \s  # free-form message from yamllint
+\( (?P<code>    [^)]+ ) \) $   # symbolic error code from yamllint
+''', re.VERBOSE)
+
+
+FileParts = dict[str, tuple[str, int, str | None]]
+'''Map temporary file name to original file name and line offset.
+
+For FileParts of YAML header data, also includes the content of the file part,
+for direct processing. For FileParts of scripts, this is None instead.
+'''
+
+
+class Error(NamedTuple):
+    '''A linter message.
+
+    Instances should contain line and column numbers relative to the original
+    input file, not relative to any FileParts that might have been used.
+    '''
+    level: str
+    message: str
+    file_name: str
+    line: int
+    column: int
+    end_line: int | None = None
+    end_column: int | None = None
+
+    def format_gcc(self) -> str:
+        '''Turn the Error into a string like a GCC error message.'''
+        return (f'{self.file_name}:{self.line}:{self.column}: '
+                f'{GCC_LEVELS[self.level]}: {self.message}')
+
+    def format_github(self) -> str:
+        '''Turn the Error into a string that GitHub understands.
+
+        If printed from a GitHub Action, this will show the error messages in
+        the Files view.
+        '''
+        end_line = '' if self.end_line is None else f',endLine={self.end_line}'
+        end_column = '' if self.end_column is None else \
+            f',endColumn={self.end_column}'
+        return (f'::{GITHUB_LEVELS[self.level]} file={self.file_name}'
+                f',line={self.line}{end_line}'
+                f',col={self.column}{end_column}::{self.message}')
+
+
+ERROR_FORMATTERS: dict[str, Callable[[Error], str]] = {
+    'gcc': Error.format_gcc,
+    'github': Error.format_github,
+}
+
+
+def split_files(temp_dir: str, input_files: Iterable[TextIO]) \
+        -> tuple[FileParts, FileParts]:
+    '''Split every given file into its YAML header and script part.'''
+    header_parts: FileParts = {}
+    script_parts: FileParts = {}
+    for input_file in input_files:
+        orig_basename = os.path.basename(input_file.name)
+        recipe = input_file.read()
+        # Get the first byte of the '---\n' line (excluding the newline before it).
+        separator_position = recipe.find('\n---\n') + 1
+        yaml = recipe[:separator_position]
+        with open(f'{temp_dir}/{orig_basename}.head.yaml', 'w') as headerf:
+            headerf.write(yaml)
+            header_parts[headerf.name] = input_file.name, 0, yaml
+        with open(f'{temp_dir}/{orig_basename}.script.sh', 'w') as scriptf:
+            scriptf.write(recipe[separator_position + 4:])
+            # Add 1 to line offset for the separator line.
+            script_parts[scriptf.name] = input_file.name, yaml.count('\n') + 1, None
+    return header_parts, script_parts
+
+
+def shellcheck(recipes: FileParts) -> Iterable[Error]:
+    '''Run shellcheck on a recipe.'''
+    cmd = 'shellcheck', '--format=json1', '--shell=bash', *recipes.keys()
+    result = run(cmd, stdout=PIPE, text=True)
+    for comment in json.loads(result.stdout)['comments']:
+        orig_file_name, line_offset, _ = recipes[comment['file']]
+        yield Error(
+            comment['level'],
+            f"{comment['message']} [SC{comment['code']}]",
+            orig_file_name,
+            comment['line'] + line_offset,
+            comment['column'],
+            comment['endLine'] + line_offset,
+            comment['endColumn'],
+        )
+
+
+def yamllint(headers: FileParts) -> Iterable[Error]:
+    '''Run yamllint on a recipe's YAML header.'''
+    cmd = 'yamllint', '-f', 'parsable', '-d', json.dumps({
+        # https://yamllint.readthedocs.io/en/stable/configuration.html
+        'extends': 'default',
+        'rules': {
+            # Be more lenient on line length, e.g. for incremental_recipe.
+            'line-length': {'max': 120},
+            # YAML headers don't have a '---' line at the beginning.
+            'document-start': 'disable',
+            # YAML has a gotcha with automatic octal numbers.
+            'octal-values': {
+                # Numbers starting with 0 are octal. This is not usually intended.
+                'forbid-implicit-octal': True,
+                # Numbers starting with 0o are OK.
+                'forbid-explicit-octal': False,
+            },
+        },
+    }), *headers.keys()
+    result = run(cmd, stdout=PIPE, text=True)
+    for line in result.stdout.splitlines():
+        if not (match := re.search(YAMLLINT_LINE_PATTERN, line)):
+            raise ValueError(f'could not parse yamllint output line {line!r}')
+        orig_file_name, line_offset, _ = headers[match['fname']]
+        yield Error(
+            match['level'],
+            f"{match['message']} [yl:{match['code']}]",
+            orig_file_name,
+            int(match['line']) + line_offset,
+            int(match['column']),
+        )
+
+
+class TrackedLocationLoader(yaml.loader.SafeLoader):
+    '''Load YAML documents while keeping track of keys' line and column.'''
+    def construct_mapping(self, node, deep=False):
+        mapping = super().construct_mapping(node, deep=deep)
+        mapping['_linter_start_mark'] = node.start_mark
+        return mapping
+
+
+def get_schema_for_file(file_name: str) -> Schema:
+    '''Construct a schema to validate the YAML header of the given file.'''
+    def package_name_matches(package: str) -> bool:
+        return f'{package.lower()}.sh' == os.path.basename(file_name)
+    package_name = And(str, package_name_matches,
+                       error=('package name must match the file name '
+                              'case-insensitively'))
+
+    def is_git_url(string: str) -> bool:
+        return (string.startswith('https://') or
+                string.startswith('http://') or
+                string.startswith('git://'))
+    git_url = And(str, is_git_url,
+                  error=('source and/or write_repo must be a git URL '
+                         '(https://, http://, or git://)'))
+
+    def is_valid_require(spec: str) -> bool:
+        _, sep, arch_re = spec.partition(':')
+        if sep:
+            # Raise a re.error if the regex is invalid.
+            re.compile(arch_re)
+        return True
+    requires = And(str, is_valid_require)
+
+    package_schema = Schema({
+        'package': package_name,
+        Optional('version'): str,
+        Optional('tag'): str,
+        Optional('source'): git_url,
+        Optional('write_repo'): git_url,
+        Optional('requires'): [requires],
+        Optional('build_requires'): [requires],
+        Optional('env'): dict[str, str],
+        Optional('incremental_recipe'): str,
+        Optional('valid_defaults'): list[str],
+        Optional('prepend_path'): dict[str, str | list[str]],
+        Optional('append_path'): dict[str, str | list[str]],
+    })
+
+    if file_name.startswith('defaults-'):
+        return Schema({
+            'package': package_name,
+        })
+
+    return package_schema
+
+
+def header_lint(headers: FileParts) -> Iterable[Error]:
+    '''Apply alidist-specific linting rules to YAML headers.'''
+    def make_error(message: str, code: str,
+                   rel_line: int, column: int) -> Error:
+        return Error('error', f'{message} [ali:{code}]',
+                     orig_file_name, rel_line + line_offset, column)
+
+    def line_of(key_name: str) -> int:
+        '''Find a key in yaml_data and return its relative line number.'''
+        return yaml_data[key_name]['_linter_start_mark'].line + 1
+
+    for header in headers.values():  # we don't need the temporary file
+        orig_file_name, line_offset, yaml_text = header
+        assert yaml_text is not None, 'expected YAML text'
+        yaml_lines = yaml_text.splitlines()
+        try:
+            yaml_data = yaml.load(io.StringIO(yaml_text), TrackedLocationLoader)
+        except MarkedYAMLError as exc:
+            mark = exc.problem_mark
+            yield make_error(f'parse error: {exc.problem}', 'parse',
+                             1 if mark is None else mark.line,
+                             0 if mark is None else mark.column)
+            continue
+        except YAMLError as exc:
+            yield make_error('unknown error parsing YAML', 'parse-error', 1, 0)
+            continue
+        if not isinstance(yaml_data, dict):
+            yield make_error('recipe metadata must be a dictionary',
+                             'toplevel-nondict', 1, 0)
+            continue
+
+        # Make sure values have the types that they should.
+        try:
+            get_schema_for_file(orig_file_name).validate(yaml_data)
+        except SchemaError as exc:
+            yield make_error(' '.join(
+                custom or auto
+                for custom, auto in zip(exc.errors, exc.autos)
+                if custom or auto
+            ), 'schema', 1, 0)
+            continue
+
+        match yaml_data.keys():
+            case ['package', 'version', 'tag', *_]:
+                pass
+            case ['package', 'tag', other_keys]:
+                if 'version' in other_keys:
+                    pass
+                    # yield make_error()
+
+
+def main(args: Namespace) -> int:
+    '''Script entry point, returning the desired exit code.'''
+    formatter = ERROR_FORMATTERS[args.format]
+    progname = os.path.basename(sys.argv[0])
+    have_error = False
+    with tempfile.TemporaryDirectory(prefix=progname) as tempdir:
+        headers, scripts = split_files(tempdir, args.recipes)
+        errors = itertools.chain(
+            () if args.no_lint else header_lint(headers),
+            () if args.no_yamllint else yamllint(headers),
+            () if args.no_shellcheck else shellcheck(scripts),
+        )
+        for error in errors:
+            have_error |= error.level == 'error'
+            print(formatter(error))
+    return 1 if have_error else 0
+
+
+def parse_args() -> Namespace:
+    '''Parse and return command-line arguments.'''
+    parser = ArgumentParser(description=__doc__)
+    parser.add_argument('-S', '--no-shellcheck', action='store_true',
+                        help="don't run shellcheck on the main script")
+    parser.add_argument('-Y', '--no-yamllint', action='store_true',
+                        help="don't run yamllint on the header")
+    parser.add_argument('-L', '--no-lint', action='store_true',
+                        help="don't run internal linter on the header")
+    parser.add_argument('-f', '--format', metavar='FORMAT',
+                        choices=ERROR_FORMATTERS.keys(), default='gcc',
+                        help=('format of error messages '
+                              '(one of %(choices)s; default %(default)s)'))
+    parser.add_argument('recipes', metavar='RECIPE', nargs='+',
+                        type=FileType('r'), help='a file name to check')
+    return parser.parse_args()
+
+
+if __name__ == '__main__':
+    sys.exit(main(parse_args()))
