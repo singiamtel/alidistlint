@@ -496,13 +496,17 @@ def main(args: Namespace) -> int:
 
 def parse_args() -> Namespace:
     '''Parse and return command-line arguments.'''
-    parser = ArgumentParser(description=__doc__)
+    parser = ArgumentParser(description=__doc__, epilog='''\
+    Errors and warnings will be printed to standard output in the format you
+    selected. If any messages with "error" severity were produced, `alidistlint`
+    exits with a non-zero exit code.
+    ''')
     parser.add_argument('-S', '--no-shellcheck', action='store_true',
                         help="don't run shellcheck on the main script")
     parser.add_argument('-Y', '--no-yamllint', action='store_true',
                         help="don't run yamllint on the header")
-    parser.add_argument('-L', '--no-lint', action='store_true',
-                        help="don't run internal linter on the header")
+    parser.add_argument('-H', '--no-headerlint', action='store_true',
+                        help="don't run internal linter on the YAML header")
     parser.add_argument('-f', '--format', metavar='FORMAT',
                         choices=ERROR_FORMATTERS.keys(), default='gcc',
                         help=('format of error messages '
