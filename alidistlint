@@ -484,7 +484,7 @@ def main(args: Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix=progname) as tempdir:
         headers, scripts = split_files(tempdir, args.recipes)
         errors = itertools.chain(
-            () if args.no_lint else header_lint(headers),
+            () if args.no_headerlint else header_lint(headers),
             () if args.no_yamllint else yamllint(headers),
             () if args.no_shellcheck else shellcheck(scripts),
         )
