@@ -3,7 +3,6 @@
 '''Lint alidist recipes using yamllint and shellcheck.'''
 
 from argparse import ArgumentParser, FileType, Namespace
-import io
 import itertools
 import json
 import os.path
@@ -347,11 +346,7 @@ def position_of_key(tagged_object: dict,
     '''Find the line and column numbers of the specified key.'''
     cur_object_parent = tagged_object
     for path_element in path[:-1]:
-        try:
-            cur_object_parent = cur_object_parent[path_element]
-        except KeyError:
-            print(path_element, cur_object_parent)
-            raise
+        cur_object_parent = cur_object_parent[path_element]
     if isinstance(cur_object_parent, dict):
         direct_parent = cur_object_parent['_locations']
     elif isinstance(cur_object_parent, list):
@@ -439,8 +434,7 @@ def header_lint(headers: FileParts) -> Iterable[Error]:
 
         # Parse the source YAML, keeping track of the locations of keys.
         try:
-            tagged_data = yaml.load(io.BytesIO(yaml_text),
-                                    TrackedLocationLoader)
+            tagged_data = yaml.load(yaml_text, TrackedLocationLoader)
         except MarkedYAMLError as exc:
             mark = exc.problem_mark
             yield make_error(f'parse error: {exc.problem}', 'parse',
