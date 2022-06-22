@@ -51,8 +51,8 @@ ObjectPath = tuple[str | int, ...]
 For instance, A is at path (0, "a") in the object [{"a": A}].
 '''
 
-FileParts = dict[str, tuple[str, int, bytes | None]]
-'''Map temporary file name to original file name and line offset.
+FileParts = dict[str, tuple[str, int, int, bytes | None]]
+'''Map temporary file name to original file name and line/column offsets.
 
 For FileParts of YAML header data, also includes the content of the file part,
 for direct processing. For FileParts of scripts, this is None instead.
@@ -117,12 +117,37 @@ def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
         yaml_text = recipe[:separator_position]
         with open(f'{temp_dir}/{orig_basename}.head.yaml', 'wb') as headerf:
             headerf.write(yaml_text)
-            header_parts[headerf.name] = input_file.name, 0, yaml_text
+            header_parts[headerf.name] = input_file.name, 0, 0, yaml_text
         with open(f'{temp_dir}/{orig_basename}.script.sh', 'wb') as scriptf:
             scriptf.write(recipe[separator_position + 4:])
             # Add 1 to line offset for the separator line.
             script_parts[scriptf.name] = \
-                input_file.name, yaml_text.count(b'\n') + 1, None
+                input_file.name, yaml_text.count(b'\n') + 1, 0, None
+
+        # Extract recipes embedded in YAML header, e.g. incremental_recipe.
+        try:
+            tagged_data = yaml.load(yaml_text, TrackedLocationLoader)
+        except yaml.YAMLError:
+            # If we can't even load the YAML, skip checking embedded recipes.
+            continue
+        for recipe_key, recipe in tagged_data.items():
+            if not isinstance(recipe_key, str):
+                continue
+            if not (recipe_key.endswith('_recipe') or
+                    recipe_key.endswith('_check')):
+                continue
+            line_offset, column_offset = position_of_key(tagged_data,
+                                                         (recipe_key,))
+            line_offset += 1     # assume values start on a new line
+            line_offset -= 1     # first line is 1, but this is an offset
+            column_offset += 2   # yamllint requires 2-space indents
+            column_offset -= 1   # first column is 1, but this is an offset
+            with open(f'{temp_dir}/{orig_basename}.{recipe_key}.sh', 'w',
+                      encoding='utf-8') as scriptf:
+                scriptf.write(recipe)
+                script_parts[scriptf.name] = \
+                    input_file.name, line_offset, column_offset, None
+
     return header_parts, script_parts
 
 
@@ -131,15 +156,16 @@ def shellcheck(recipes: FileParts) -> Iterable[Error]:
     cmd = 'shellcheck', '--format=json1', '--shell=bash', *recipes.keys()
     result = run(cmd, stdout=PIPE, text=True, check=False)
     for comment in json.loads(result.stdout)['comments']:
-        orig_file_name, line_offset, _ = recipes[comment['file']]
+        orig_file_name, line_offset, column_offset, _ = \
+            recipes[comment['file']]
         yield Error(
             comment['level'],
             f"{comment['message']} [SC{comment['code']}]",
             orig_file_name,
             comment['line'] + line_offset,
-            comment['column'],
+            comment['column'] + column_offset,
             comment['endLine'] + line_offset,
-            comment['endColumn'],
+            comment['endColumn'] + column_offset,
         )
 
 
@@ -166,13 +192,13 @@ def yamllint(headers: FileParts) -> Iterable[Error]:
     for line in result.stdout.splitlines():
         if not (match := re.search(YAMLLINT_LINE_PATTERN, line)):
             raise ValueError(f'could not parse yamllint output line {line!r}')
-        orig_file_name, line_offset, _ = headers[match['fname']]
+        orig_file_name, line_offset, column_offset, _ = headers[match['fname']]
         yield Error(
             match['level'],
             f"{match['message']} [yl:{match['code']}]",
             orig_file_name,
             int(match['line']) + line_offset,
-            int(match['column']),
+            int(match['column']) + column_offset,
         )
 
 
@@ -364,34 +390,37 @@ def position_of_key(tagged_object: dict,
 def emit_validation_errors(error_tree: ValidationErrorTree,
                            tagged_validated_object: dict,
                            file_name: str,
+                           line_offset: int, column_offset: int,
                            path: ObjectPath = ()) -> Iterable[Error]:
     '''Parse any validation errors from a cerberus validator.'''
     if isinstance(error_tree, dict):
         for key, suberrors in error_tree.items():
             yield from emit_validation_errors(
-                suberrors, tagged_validated_object, file_name, path + (key,),
+                suberrors, tagged_validated_object, file_name,
+                line_offset, column_offset, path + (key,),
             )
     elif isinstance(error_tree, list):
         for subtree in error_tree:
-            yield from emit_validation_errors(subtree, tagged_validated_object,
-                                              file_name, path)
+            yield from emit_validation_errors(
+                subtree, tagged_validated_object, file_name,
+                line_offset, column_offset, path,
+            )
     elif isinstance(error_tree, str):
         line, column = position_of_key(tagged_validated_object, path)
         dotted_subpath = '.'.join(map(str, path))
         yield Error('error', f'{dotted_subpath}: {error_tree} [ali:schema]',
-                    file_name, line, column)
+                    file_name, line + line_offset, column + column_offset)
     else:
         raise TypeError(f'cannot handle {error_tree!r}')
 
 
-def check_keys_order(data: dict[str, Any],
-                     orig_file_name: str,
-                     line_offset: int) -> Iterable[Error]:
+def check_keys_order(data: dict[str, Any], orig_file_name: str,
+                     line_offset: int, column_offset: int) -> Iterable[Error]:
     '''Produce errors relating to key order in the YAML header data.'''
     def make_error(message: str, key: str) -> Error:
-        rel_line, column = position_of_key(data, (key,))
-        return Error('error', f'{message} [ali:key-order]',
-                     orig_file_name, rel_line + line_offset, column)
+        rel_line, rel_column = position_of_key(data, (key,))
+        return Error('error', f'{message} [ali:key-order]', orig_file_name,
+                     rel_line + line_offset, rel_column + column_offset)
 
     keys = list(data.keys())
     if 'requires' in data and 'build_requires' in data and \
@@ -420,12 +449,12 @@ def check_keys_order(data: dict[str, Any],
 def header_lint(headers: FileParts) -> Iterable[Error]:
     '''Apply alidist-specific linting rules to YAML headers.'''
     def make_error(message: str, code: str,
-                   rel_line: int, column: int) -> Error:
-        return Error('error', f'{message} [ali:{code}]',
-                     orig_file_name, rel_line + line_offset, column)
+                   rel_line: int, rel_column: int) -> Error:
+        return Error('error', f'{message} [ali:{code}]', orig_file_name,
+                     rel_line + line_offset, rel_column + column_offset)
 
     for header in headers.values():  # we don't need the temporary file
-        orig_file_name, line_offset, yaml_text = header
+        orig_file_name, line_offset, column_offset, yaml_text = header
         if not yaml_text:
             yield make_error('metadata not found or empty '
                              "(is the '\\n---\\n' separator present?)",
@@ -461,13 +490,15 @@ def header_lint(headers: FileParts) -> Iterable[Error]:
         validator = cerberus.Validator(get_schema_for_file(orig_file_name))
         if not validator.validate(pure_data):
             yield from emit_validation_errors(validator.errors, tagged_data,
-                                              orig_file_name)
+                                              orig_file_name,
+                                              line_offset, column_offset)
 
         # Make sure the order of the most important keys is correct.
-        yield from check_keys_order(tagged_data, orig_file_name, line_offset)
+        yield from check_keys_order(tagged_data, orig_file_name,
+                                    line_offset, column_offset)
         for tagged_override_data in tagged_data.get('overrides', {}).values():
-            yield from check_keys_order(tagged_override_data,
-                                        orig_file_name, line_offset)
+            yield from check_keys_order(tagged_override_data, orig_file_name,
+                                        line_offset, column_offset)
 
 
 def main(args: Namespace) -> int:

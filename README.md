@@ -24,7 +24,11 @@ If any messages with "error" severity were produced, `alidistlint` exits with a 
 ## Shellcheck validation
 
 The main build recipe (after the `---` line) is passed to `shellcheck`.
-Currently, `incremental_recipe` and the like are **not** checked using `shellcheck`, but this is planned in future.
+
+Currently, toplevel keys ending in `_recipe` or `_check` (such as `incremental_recipe`) are also checked using `shellcheck`.
+This does not work for such keys specified in `overrides` yet.
+
+There is a known issue with the checking of the above keys: if they do not start on a new line (using e.g. `key: |`), the reported line numbers for shellcheck errors will be off by one.
 
 ## Internal YAML header validation
 
