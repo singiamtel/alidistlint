@@ -42,8 +42,15 @@ YAMLLINT_LINE_PATTERN: re.Pattern = re.compile(r'''
 ''', re.VERBOSE)
 
 
-ValidationErrorList = list[str | dict[Any, 'ValidationErrorList']]
-ValidationErrorTree = str | dict[Any, ValidationErrorList] | ValidationErrorList
+ValidationErrors = list[str | dict[Any, 'ValidationErrors']]
+ValidationErrorTree = str | dict[Any, ValidationErrors] | ValidationErrors
+'''An error tree as produced by cerberus.'''
+
+ObjectPath = tuple[str | int, ...]
+'''Specifies where in a nested object a value is located as a series of keys.
+
+For instance, A is at path (0, "a") in the object [{"a": A}].
+'''
 
 FileParts = dict[str, tuple[str, int, str | None]]
 '''Map temporary file name to original file name and line offset.
@@ -106,13 +113,15 @@ def split_files(temp_dir: str, input_files: Iterable[TextIO]) \
     for input_file in input_files:
         orig_basename = os.path.basename(input_file.name)
         recipe = input_file.read()
-        # Get the first byte of the '---\n' line (excluding the newline before it).
+        # Get the first byte of the '---\n' line (excluding the prev newline).
         separator_position = recipe.find('\n---\n') + 1
         yaml_text = recipe[:separator_position]
-        with open(f'{temp_dir}/{orig_basename}.head.yaml', 'w') as headerf:
+        with open(f'{temp_dir}/{orig_basename}.head.yaml', 'w',
+                  encoding='utf-8') as headerf:
             headerf.write(yaml_text)
             header_parts[headerf.name] = input_file.name, 0, yaml_text
-        with open(f'{temp_dir}/{orig_basename}.script.sh', 'w') as scriptf:
+        with open(f'{temp_dir}/{orig_basename}.script.sh', 'w',
+                  encoding='utf-8') as scriptf:
             scriptf.write(recipe[separator_position + 4:])
             # Add 1 to line offset for the separator line.
             script_parts[scriptf.name] = \
@@ -123,7 +132,7 @@ def split_files(temp_dir: str, input_files: Iterable[TextIO]) \
 def shellcheck(recipes: FileParts) -> Iterable[Error]:
     '''Run shellcheck on a recipe.'''
     cmd = 'shellcheck', '--format=json1', '--shell=bash', *recipes.keys()
-    result = run(cmd, stdout=PIPE, text=True)
+    result = run(cmd, stdout=PIPE, text=True, check=False)
     for comment in json.loads(result.stdout)['comments']:
         orig_file_name, line_offset, _ = recipes[comment['file']]
         yield Error(
@@ -149,14 +158,14 @@ def yamllint(headers: FileParts) -> Iterable[Error]:
             'document-start': 'disable',
             # YAML has a gotcha with automatic octal numbers.
             'octal-values': {
-                # Numbers starting with 0 are octal. This is not usually intended.
+                # Numbers starting with 0 are octal. This is usually a mistake.
                 'forbid-implicit-octal': True,
                 # Numbers starting with 0o are OK.
                 'forbid-explicit-octal': False,
             },
         },
     }), *headers.keys()
-    result = run(cmd, stdout=PIPE, text=True)
+    result = run(cmd, stdout=PIPE, text=True, check=False)
     for line in result.stdout.splitlines():
         if not (match := re.search(YAMLLINT_LINE_PATTERN, line)):
             raise ValueError(f'could not parse yamllint output line {line!r}')
@@ -170,6 +179,7 @@ def yamllint(headers: FileParts) -> Iterable[Error]:
         )
 
 
+# pylint: disable=too-many-ancestors
 class TrackedLocationLoader(yaml.loader.SafeLoader):
     '''Load YAML documents while keeping track of keys' line and column.
 
@@ -194,6 +204,12 @@ class TrackedLocationLoader(yaml.loader.SafeLoader):
 
     @staticmethod
     def remove_trackers(data):
+        '''Remove temporary location tracker items.
+
+        Original file locations are tracked using special properties and list
+        items and used for more informative error messages, but they should not
+        be present for schema validation, for example.
+        '''
         if isinstance(data, dict):
             return {key: TrackedLocationLoader.remove_trackers(value)
                     for key, value in data.items()
@@ -238,7 +254,7 @@ def get_schema_for_file(file_name: str) -> dict:
     def version_string_ok(field, value, error):
         if not file_name.startswith('defaults-') and \
            '%(defaults_upper)s' in value:
-            error(field, f'cannot use %(defaults_upper)s in non-defaults recipe')
+            error(field, 'cannot use %(defaults_upper)s in non-default recipe')
 
     def is_valid_regex(field, value, error):
         try:
@@ -355,7 +371,7 @@ def position_of_key(tagged_object: dict,
 def emit_validation_errors(error_tree: ValidationErrorTree,
                            tagged_validated_object: dict,
                            file_name: str,
-                           path: tuple[str | int, ...] = ()) -> Iterable[Error]:
+                           path: ObjectPath = ()) -> Iterable[Error]:
     '''Parse any validation errors from a cerberus validator.'''
     if isinstance(error_tree, dict):
         for key, suberrors in error_tree.items():
@@ -373,6 +389,39 @@ def emit_validation_errors(error_tree: ValidationErrorTree,
                     file_name, line, column)
     else:
         raise TypeError(f'cannot handle {error_tree!r}')
+
+
+def check_keys_order(data: dict[str, Any],
+                     orig_file_name: str,
+                     line_offset: int) -> Iterable[Error]:
+    '''Produce errors relating to key order in the YAML header data.'''
+    def make_error(message: str, key: str) -> Error:
+        rel_line, column = position_of_key(data, (key,))
+        return Error('error', f'{message} [ali:key-order]',
+                     orig_file_name, rel_line + line_offset, column)
+
+    keys = list(data.keys())
+    if 'requires' in data and 'build_requires' in data and \
+       keys.index('requires') > keys.index('build_requires'):
+        for key in ('requires', 'build_requires'):
+            yield make_error('requires must come before build_requires', key)
+    if 'package' in data:
+        if keys.index('package') != 0:
+            yield make_error('package: must be the first key in the file',
+                             'package')
+        if 'version' in data and keys.index('version') != 1:
+            yield make_error('version: must be the second key in the file '
+                             '(after package)', 'version')
+        if 'tag' in data and keys.index('tag') != 2:
+            yield make_error('tag: must be the third key in the file '
+                             '(after version)', 'tag')
+    else:
+        if 'version' in data and keys.index('version') != 0:
+            yield make_error('version: must be the first key in the override '
+                             'declaration', 'version')
+        if 'tag' in data and keys.index('tag') != 1:
+            yield make_error('tag: must be the second key in the override '
+                             'declaration (after version)', 'tag')
 
 
 def header_lint(headers: FileParts) -> Iterable[Error]:
@@ -412,7 +461,7 @@ def header_lint(headers: FileParts) -> Iterable[Error]:
         # Basic sanity check.
         if not isinstance(pure_data, dict):
             yield make_error('recipe metadata must be a dictionary '
-                             f'(got a {type(pure_data)})',
+                             f'(got a {type(pure_data)} instead)',
                              'toplevel-nondict', 1, 0)
             continue
 
@@ -423,50 +472,10 @@ def header_lint(headers: FileParts) -> Iterable[Error]:
                                               orig_file_name)
 
         # Make sure the order of the most important keys is correct.
-        packages_to_check: list[dict] = [tagged_data]
-        if isinstance(tagged_data.get('overrides'), dict):
-            packages_to_check.extend(tagged_data['overrides'].values())
-
-        for data in packages_to_check:
-            keys = list(data.keys())
-            if 'requires' in data and 'build_requires' in data and \
-               keys.index('requires') > keys.index('build_requires'):
-                for key in ('requires', 'build_requires'):
-                    yield make_error(
-                        'requires must come before build_requires',
-                        'key-order', *position_of_key(data, (key,)),
-                    )
-            if 'package' in data:
-                if keys.index('package') != 0:
-                    yield make_error(
-                        'package: must be the first key in the file',
-                        'key-order', *position_of_key(data, ('package',)),
-                    )
-                if 'version' in data and keys.index('version') != 1:
-                    yield make_error(
-                        'version: must be the second key in the file '
-                        '(after package)',
-                        'key-order', *position_of_key(data, ('version',)),
-                    )
-                if 'tag' in data and keys.index('tag') != 2:
-                    yield make_error(
-                        'tag: must be the third key in the file '
-                        '(after version)',
-                        'key-order', *position_of_key(data, ('key',)),
-                    )
-            else:
-                if 'version' in data and keys.index('version') != 0:
-                    yield make_error(
-                        'version: must be the first key in the override '
-                        'declaration',
-                        'key-order', *position_of_key(data, ('version',)),
-                    )
-                if 'tag' in data and keys.index('tag') != 1:
-                    yield make_error(
-                        'tag: must be the second key in the override '
-                        'declaration (after version)',
-                        'key-order', *position_of_key(data, ('key',)),
-                    )
+        yield from check_keys_order(tagged_data, orig_file_name, line_offset)
+        for tagged_override_data in tagged_data.get('overrides', {}).values():
+            yield from check_keys_order(tagged_override_data,
+                                        orig_file_name, line_offset)
 
 
 def main(args: Namespace) -> int:
