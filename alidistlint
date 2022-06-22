@@ -11,7 +11,7 @@ import re
 from subprocess import run, PIPE
 import sys
 import tempfile
-from typing import Any, Callable, Iterable, NamedTuple, TextIO
+from typing import Any, BinaryIO, Callable, Iterable, NamedTuple
 
 import cerberus
 import yaml
@@ -52,7 +52,7 @@ ObjectPath = tuple[str | int, ...]
 For instance, A is at path (0, "a") in the object [{"a": A}].
 '''
 
-FileParts = dict[str, tuple[str, int, str | None]]
+FileParts = dict[str, tuple[str, int, bytes | None]]
 '''Map temporary file name to original file name and line offset.
 
 For FileParts of YAML header data, also includes the content of the file part,
@@ -105,7 +105,7 @@ class MockMark(NamedTuple):
     column: int = 0
 
 
-def split_files(temp_dir: str, input_files: Iterable[TextIO]) \
+def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
         -> tuple[FileParts, FileParts]:
     '''Split every given file into its YAML header and script part.'''
     header_parts: FileParts = {}
@@ -114,18 +114,16 @@ def split_files(temp_dir: str, input_files: Iterable[TextIO]) \
         orig_basename = os.path.basename(input_file.name)
         recipe = input_file.read()
         # Get the first byte of the '---\n' line (excluding the prev newline).
-        separator_position = recipe.find('\n---\n') + 1
+        separator_position = recipe.find(b'\n---\n') + 1
         yaml_text = recipe[:separator_position]
-        with open(f'{temp_dir}/{orig_basename}.head.yaml', 'w',
-                  encoding='utf-8') as headerf:
+        with open(f'{temp_dir}/{orig_basename}.head.yaml', 'wb') as headerf:
             headerf.write(yaml_text)
             header_parts[headerf.name] = input_file.name, 0, yaml_text
-        with open(f'{temp_dir}/{orig_basename}.script.sh', 'w',
-                  encoding='utf-8') as scriptf:
+        with open(f'{temp_dir}/{orig_basename}.script.sh', 'wb') as scriptf:
             scriptf.write(recipe[separator_position + 4:])
             # Add 1 to line offset for the separator line.
             script_parts[scriptf.name] = \
-                input_file.name, yaml_text.count('\n') + 1, None
+                input_file.name, yaml_text.count(b'\n') + 1, None
     return header_parts, script_parts
 
 
@@ -441,7 +439,7 @@ def header_lint(headers: FileParts) -> Iterable[Error]:
 
         # Parse the source YAML, keeping track of the locations of keys.
         try:
-            tagged_data = yaml.load(io.StringIO(yaml_text),
+            tagged_data = yaml.load(io.BytesIO(yaml_text),
                                     TrackedLocationLoader)
         except MarkedYAMLError as exc:
             mark = exc.problem_mark
@@ -510,7 +508,8 @@ def parse_args() -> Namespace:
                         help=('format of error messages '
                               '(one of %(choices)s; default %(default)s)'))
     parser.add_argument('recipes', metavar='RECIPE', nargs='+',
-                        type=FileType('r'), help='a file name to check')
+                        type=FileType('rb'),
+                        help='a file name to check (use - for stdin)')
     return parser.parse_args()
 
 
