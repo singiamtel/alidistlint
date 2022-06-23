@@ -7,7 +7,7 @@ import itertools
 import json
 import os.path
 import re
-from subprocess import run, PIPE
+from subprocess import run, PIPE, DEVNULL
 import sys
 import tempfile
 from typing import Any, BinaryIO, Callable, Iterable, NamedTuple
@@ -130,6 +130,10 @@ def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
         except yaml.YAMLError:
             # If we can't even load the YAML, skip checking embedded recipes.
             continue
+        if not isinstance(tagged_data, dict):
+            # Something went wrong loading the YAML -- maybe the '---' line
+            # isn't present.
+            continue
         for recipe_key, recipe in tagged_data.items():
             if not isinstance(recipe_key, str):
                 continue
@@ -153,9 +157,21 @@ def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
 
 def shellcheck(recipes: FileParts) -> Iterable[Error]:
     '''Run shellcheck on a recipe.'''
-    cmd = 'shellcheck', '--format=json1', '--shell=bash', *recipes.keys()
-    result = run(cmd, stdout=PIPE, text=True, check=False)
-    for comment in json.loads(result.stdout)['comments']:
+    # See shellcheck --list-optional.
+    enabled_optional_checks = ','.join((
+        # Suggest explicitly using -n in `[ $var ]`.
+        'avoid-nullary-conditions',
+        # Notify when set -e is suppressed during function invocation.
+        'check-set-e-suppressed',
+    ))
+    cmd = 'shellcheck', '--format=json1', '--shell=bash', \
+        '--enable', enabled_optional_checks, *recipes.keys()
+    result = run(cmd, stdout=PIPE, stderr=DEVNULL, text=True, check=False)
+    try:
+        comments = json.loads(result.stdout)['comments']
+    except (json.JSONDecodeError, KeyError) as exc:
+        raise ValueError('failed to parse shellcheck output') from exc
+    for comment in comments:
         orig_file_name, line_offset, column_offset, _ = \
             recipes[comment['file']]
         yield Error(
@@ -177,8 +193,17 @@ def yamllint(headers: FileParts) -> Iterable[Error]:
         'rules': {
             # Be more lenient on line length, e.g. for incremental_recipe.
             'line-length': {'max': 120},
+            # Force 2-space indents. By default, yamllint only checks for
+            # consistent indent width *within the file*, not across files.
+            'indentation': {'spaces': 2},
             # YAML headers don't have a '---' line at the beginning.
             'document-start': 'disable',
+            # Empty values are null, which we don't want.
+            'empty-values': 'enable',
+            # Don't allow {a: 1, b: 2}-style mappings (except {}).
+            'braces': {'forbid': 'non-empty'},
+            # Make bare 'on', 'off' and the like errors, not warnings.
+            'truthy': {'level': 'error'},
             # YAML has a gotcha with automatic octal numbers.
             'octal-values': {
                 # Numbers starting with 0 are octal. This is usually a mistake.
@@ -188,7 +213,7 @@ def yamllint(headers: FileParts) -> Iterable[Error]:
             },
         },
     }), *headers.keys()
-    result = run(cmd, stdout=PIPE, text=True, check=False)
+    result = run(cmd, stdout=PIPE, stderr=DEVNULL, text=True, check=False)
     for line in result.stdout.splitlines():
         if not (match := re.search(YAMLLINT_LINE_PATTERN, line)):
             raise ValueError(f'could not parse yamllint output line {line!r}')
