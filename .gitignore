@@ -1,5 +1,6 @@
 # Python build artefacts
 /*.egg-info
+/build
 /dist
 
 # alidist recipes for testing
