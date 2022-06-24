@@ -166,7 +166,12 @@ def shellcheck(recipes: FileParts) -> Iterable[Error]:
     ))
     cmd = 'shellcheck', '--format=json1', '--shell=bash', \
         '--enable', enabled_optional_checks, *recipes.keys()
-    result = run(cmd, stdout=PIPE, stderr=DEVNULL, text=True, check=False)
+    try:
+        result = run(cmd, stdout=PIPE, stderr=DEVNULL, text=True, check=False)
+    except FileNotFoundError:
+        # shellcheck is not installed
+        print('shellcheck is not installed; skipping', file=sys.stderr)
+        return
     try:
         comments = json.loads(result.stdout)['comments']
     except (json.JSONDecodeError, KeyError) as exc:
@@ -213,7 +218,11 @@ def yamllint(headers: FileParts) -> Iterable[Error]:
             },
         },
     }), *headers.keys()
-    result = run(cmd, stdout=PIPE, stderr=DEVNULL, text=True, check=False)
+    try:
+        result = run(cmd, stdout=PIPE, stderr=DEVNULL, text=True, check=False)
+    except FileNotFoundError:
+        print('yamllint is not installed; skipping', file=sys.stderr)
+        return
     for line in result.stdout.splitlines():
         if not (match := re.search(YAMLLINT_LINE_PATTERN, line)):
             raise ValueError(f'could not parse yamllint output line {line!r}')
