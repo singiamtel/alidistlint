@@ -2,9 +2,6 @@
 name = "alidistlint"
 description = "A code linter for alidist packages"
 version = "1.0.0"
-authors = [
-  { name="Timo Wilken", email="timo.wilken@cern.ch" },
-]
 readme = "README.md"
 requires-python = ">=3.6"
 classifiers = [
@@ -27,6 +24,10 @@ linters = [
 
 [project.scripts]
 alidistlint = "alidistlint.run:main"
+
+[[project.authors]]
+name = "Timo Wilken"
+email = "timo.wilken@cern.ch"
 
 [project.urls]
 Homepage = "https://github.com/TimoWilken/alidistlint"
