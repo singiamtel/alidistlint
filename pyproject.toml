@@ -1,7 +1,7 @@
 [project]
 name = "alidistlint"
 description = "A code linter for alidist packages"
-version = "0.0.1"
+version = "1.0.0"
 authors = [
   { name="Timo Wilken", email="timo.wilken@cern.ch" },
 ]
