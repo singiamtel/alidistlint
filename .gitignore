@@ -2,6 +2,8 @@
 *.egg-info
 /build
 /dist
+__pycache__/
+*.pyc
 
 # alidist recipes for testing
 *.sh
