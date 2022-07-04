@@ -50,6 +50,18 @@ You can run `alidistlint` as part of a GitHub Action using `-f github`. In that 
 
 `alidistlint` will exit with a non-zero exit code if any errors were found, which will cause the Action to fail.
 
+## Vim integration
+
+Put the following in your `.vimrc`:
+
+```vim
+autocmd BufNewFile,BufRead *alidist/*.sh set makeprg=alidistlint\ -f\ gcc\ % errorformat=%f:%l:%c:\ %t%*[a-z]:\ %m
+" If you want to automatically re-run the linter on every save:
+autocmd BufWritePost *alidist/*.sh make
+```
+
+Then you can use `:make` to run the linter, `:cl` to see the error list, and navigate from one error to another using `:cp` (previous), `:cc` (current) and `:cn` (next).
+
 ## Emacs integration
 
 Here is a simple Flycheck checker using `alidistlint`.
