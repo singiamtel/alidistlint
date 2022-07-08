@@ -24,11 +24,16 @@ def get_schema_for_file(file_name: str) -> dict:
     '''Construct a schema to validate the YAML header of the given file.'''
     def package_name_matches(field, value, error):
         basename = os.path.basename(file_name)
-        if f'{value.lower()}.sh' != basename:
+        if not isinstance(value, str):
+            error(field, 'must be a string')
+        elif f'{value.lower()}.sh' != basename:
             error(field, f'must match the file name {basename!r} '
                   'case-insensitively, excluding the .sh')
 
     def is_valid_require(field, value, error):
+        if not isinstance(value, str):
+            error(field, 'must be a string')
+            return
         _, sep, arch_re = value.partition(':')
         if sep:
             try:
@@ -52,8 +57,10 @@ def get_schema_for_file(file_name: str) -> dict:
         }
 
     def version_string_ok(field, value, error):
-        if not file_name.startswith('defaults-') and \
-           '%(defaults_upper)s' in value:
+        if not isinstance(value, str):
+            error(field, 'must be a string')
+        elif not file_name.startswith('defaults-') and \
+             '%(defaults_upper)s' in value:
             error(field, 'cannot use %(defaults_upper)s in non-default recipe')
 
     def is_valid_regex(field, value, error):
@@ -63,6 +70,9 @@ def get_schema_for_file(file_name: str) -> dict:
             error(field, f'invalid regex: {exc}')
 
     def is_relative_toplevel_path(field, value, error):
+        if not isinstance(value, str):
+            error(field, 'must be a string')
+            return
         if value.startswith('/'):
             error(field, 'expecting a relative path')
         if '/' in value:
