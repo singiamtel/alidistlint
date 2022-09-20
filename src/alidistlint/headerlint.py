@@ -195,6 +195,8 @@ def check_keys_order(data: dict[str, Any], orig_file_name: str,
         for key in ('requires', 'build_requires'):
             yield make_error('requires must come before build_requires', key)
     if 'package' in data:
+        # Top-level (non-override) declaration: the first three keys must be
+        # package, version, tag in that order.
         if keys.index('package') != 0:
             yield make_error('package: must be the first key in the file',
                              'package')
@@ -204,13 +206,19 @@ def check_keys_order(data: dict[str, Any], orig_file_name: str,
         if 'tag' in data and keys.index('tag') != 2:
             yield make_error('tag: must be the third key in the file '
                              '(after version)', 'tag')
-    else:
-        if 'version' in data and keys.index('version') != 0:
+    elif 'version' in data:
+        # Override declaration with a version key: version must be first and
+        # tag second (if present).
+        if keys.index('version') != 0:
             yield make_error('version: must be the first key in the override '
                              'declaration', 'version')
         if 'tag' in data and keys.index('tag') != 1:
             yield make_error('tag: must be the second key in the override '
                              'declaration (after version)', 'tag')
+    elif 'tag' in data and keys.index('tag') != 0:
+        # Override declaration without a version key: tag must be first.
+        yield make_error('tag: must be the first key in the override '
+                         'declaration (as version is not present)', 'tag')
 
 
 def headerlint(headers: FileParts) -> Iterable[Error]:
