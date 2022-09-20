@@ -46,7 +46,7 @@ def get_schema_for_file(file_name: str) -> dict:
             'type': 'dict',
             'keysrules': {
                 'type': 'string',
-                'regex': r'^[a-zA-Z_][a-zA-Z0-9_]+$',
+                'regex': r'^[a-zA-Z_][a-zA-Z0-9_]*$',
             },
             'valuesrules': {
                 'anyof': [
