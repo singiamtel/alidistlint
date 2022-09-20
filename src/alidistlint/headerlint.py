@@ -2,22 +2,19 @@
 
 import re
 import os.path
-from typing import Any, Iterable
+from typing import TYPE_CHECKING, Any, Iterable, cast
 
 import cerberus
+if TYPE_CHECKING:
+    from cerberus.validator import BareValidator
 import yaml
 
-from alidistlint.common import Error, FileParts, position_of_key, TrackedLocationLoader
+from alidistlint.common import position_of_key, \
+    Error, FilePart, ObjectPath, TrackedLocationLoader
 
 ValidationErrors = list[str | dict[Any, 'ValidationErrors']]
 ValidationErrorTree = str | dict[Any, ValidationErrors] | ValidationErrors
 '''An error tree as produced by cerberus.'''
-
-ObjectPath = tuple[str | int, ...]
-'''Specifies where in a nested object a value is located as a series of keys.
-
-For instance, A is at path (0, "a") in the object [{"a": A}].
-'''
 
 
 def get_schema_for_file(file_name: str) -> dict:
@@ -221,34 +218,45 @@ def check_keys_order(data: dict[str, Any], orig_file_name: str,
                          'declaration (as version is not present)', 'tag')
 
 
-def headerlint(headers: FileParts) -> Iterable[Error]:
+def headerlint(parts: Iterable[FilePart]) -> Iterable[Error]:
     '''Apply alidist-specific linting rules to YAML headers.'''
     def make_error(message: str, code: str,
                    rel_line: int, rel_column: int) -> Error:
-        return Error('error', f'{message} [ali:{code}]', orig_file_name,
-                     rel_line + line_offset, rel_column + column_offset)
+        return Error('error', f'{message} [ali:{code}]', header.orig_file_name,
+                     rel_line + header.line_offset, rel_column + header.column_offset)
 
-    for header in headers.values():  # we don't need the temporary file
-        orig_file_name, line_offset, column_offset, yaml_text = header
-        if not yaml_text:
-            yield make_error('metadata not found or empty '
+    yield Error('info', f'headerlint started', '', 0, 0)
+
+    for header in parts:
+        yield Error('info', f'headerlint got {header.temp_file_name}', '', 0, 0)
+        if header.file_type != 'yaml':
+            continue
+
+        if not isinstance(header.content, dict):
+            yield make_error('metadata invalid or empty '
                              "(is the '\\n---\\n' separator present?)",
-                             'empty', 1, 0)
+                             'invalid', 1, 0)
             return
 
         # Parse the source YAML, keeping track of the locations of keys.
-        try:
-            tagged_data = yaml.load(yaml_text, TrackedLocationLoader)
-        except yaml.MarkedYAMLError as exc:
-            mark = exc.problem_mark
-            yield make_error(f'parse error: {exc.problem}', 'parse',
-                             1 if mark is None else mark.line,
-                             0 if mark is None else mark.column)
-            continue
-        except yaml.YAMLError as exc:
-            yield make_error(f'unknown error parsing YAML: {exc}',
-                             'parse', 1, 0)
-            continue
+        # This should already have been done for us by common.split_files, but
+        # if parsing failed, we want to know the error.
+        if header.content:
+            tagged_data = header.content
+        else:
+            try:
+                with open(header.temp_file_name, 'rb') as temp_file:
+                    tagged_data = yaml.load(temp_file, TrackedLocationLoader)
+            except yaml.MarkedYAMLError as exc:
+                mark = exc.problem_mark
+                yield make_error(f'parse error: {exc.problem}', 'parse',
+                                1 if mark is None else mark.line,
+                                0 if mark is None else mark.column)
+                continue
+            except yaml.YAMLError as exc:
+                yield make_error(f'unknown error parsing YAML: {exc}',
+                                'parse', 1, 0)
+                continue
 
         # Run schema validation against the "clean" data, without source
         # location markers.
@@ -257,20 +265,26 @@ def headerlint(headers: FileParts) -> Iterable[Error]:
         # Basic sanity check.
         if not isinstance(pure_data, dict):
             yield make_error('recipe metadata must be a dictionary '
-                             f'(got a {type(pure_data)} instead)',
+                             f'(got a {type(pure_data).__name__} instead)',
                              'toplevel-nondict', 1, 0)
             continue
 
         # Make sure values have the types that they should.
-        validator = cerberus.Validator(get_schema_for_file(orig_file_name))
+        # cerberus.Validator uses some fancy metaprogramming that confuses the
+        # type checker, but it's really wrapping a BareValidator.
+        validator = cast('BareValidator',
+                         cerberus.Validator(get_schema_for_file(header.orig_file_name)))
         if not validator.validate(pure_data):
             yield from emit_validation_errors(validator.errors, tagged_data,
-                                              orig_file_name,
-                                              line_offset, column_offset)
+                                              header.orig_file_name,
+                                              header.line_offset,
+                                              header.column_offset)
 
         # Make sure the order of the most important keys is correct.
-        yield from check_keys_order(tagged_data, orig_file_name,
-                                    line_offset, column_offset)
+        yield from check_keys_order(tagged_data, header.orig_file_name,
+                                    header.line_offset, header.column_offset)
         for tagged_override_data in tagged_data.get('overrides', {}).values():
-            yield from check_keys_order(tagged_override_data, orig_file_name,
-                                        line_offset, column_offset)
+            yield from check_keys_order(tagged_override_data, header.orig_file_name,
+                                        header.line_offset, header.column_offset)
+
+    yield Error('info', f'headerlint finished', '', 0, 0)

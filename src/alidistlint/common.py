@@ -3,7 +3,7 @@
 '''Lint alidist recipes using yamllint and shellcheck.'''
 
 import os.path
-from typing import BinaryIO, Callable, Iterable, NamedTuple
+from typing import Any, BinaryIO, Callable, Iterable, Literal, NamedTuple
 
 import yaml
 
@@ -21,12 +21,39 @@ GITHUB_LEVELS: dict[str, str] = {
     'style': 'notice',
 }
 
-FileParts = dict[str, tuple[str, int, int, bytes | None]]
-'''Map temporary file name to original file name and line/column offsets.
+ObjectPath = tuple[str | int, ...]
+'''Specifies where in a nested object a value is located as a series of keys.
 
-For FileParts of YAML header data, also includes the content of the file part,
-for direct processing. For FileParts of scripts, this is None instead.
+For instance, A is at path (0, "a") in the object [{"a": A}].
 '''
+
+class FilePart(NamedTuple):
+    file_type: Literal['yaml'] | Literal['script']
+    orig_file_name: str
+    temp_file_name: str
+    line_offset: int
+    column_offset: int
+
+    content: str | Any
+    '''Content of the FilePart, in a form that is useful to the internal linter.
+
+    For FileParts of YAML header data, includes the parsed content of the file
+    part, for direct processing. For FileParts of scripts, this is the script's
+    content as text instead.
+    '''
+
+    key_name: str | None
+    '''The name of the key in the YAML header where this FilePart is from.
+
+    This is useful for embedded scripts (such as incremental_recipe), so we can
+    apply different rules to scripts that have different purposes.
+    '''
+
+    is_system_requirement: bool  # Required by scriptlint.
+    '''Whether the recipe that this FilePart is from is a system requirement.
+
+    This is used by scriptlint.
+    '''
 
 
 class Error(NamedTuple):
@@ -109,11 +136,8 @@ class TrackedLocationLoader(yaml.loader.SafeLoader):
         return data
 
 
-def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
-        -> tuple[FileParts, FileParts]:
+def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) -> Iterable[FilePart]:
     '''Split every given file into its YAML header and script part.'''
-    header_parts: FileParts = {}
-    script_parts: FileParts = {}
     for input_file in input_files:
         orig_basename = os.path.basename(input_file.name)
         recipe = input_file.read()
@@ -121,29 +145,38 @@ def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
         separator_position = recipe.find(b'\n---\n') + 1
         yaml_text = recipe[:separator_position]
 
-        # Extract the complete YAML header and store its text for later parsing.
-        with open(f'{temp_dir}/{orig_basename}.head.yaml', 'wb') as headerf:
-            headerf.write(yaml_text)
-            header_parts[headerf.name] = input_file.name, 0, 0, yaml_text
-
-        # Extract the main recipe script.
-        with open(f'{temp_dir}/{orig_basename}.script.sh', 'wb') as scriptf:
-            scriptf.write(recipe[separator_position + 4:])
-            # Add 1 to line offset for the separator line.
-            script_parts[scriptf.name] = \
-                input_file.name, yaml_text.count(b'\n') + 1, 0, None
-
-        # Extract recipes embedded in YAML header, e.g. incremental_recipe.
+        # Parse YAML header in order to extract recipes.
         try:
             tagged_data = yaml.load(yaml_text, TrackedLocationLoader)
         except yaml.YAMLError:
-            # If we can't even load the YAML, skip checking embedded recipes.
-            continue
+            # If we can't even load the YAML, skip checking embedded scripts
+            # and fall back to system_requirement == False. We still want to
+            # check the "main" script.
+            tagged_data = {}
         if not isinstance(tagged_data, dict):
             # Something went wrong loading the YAML -- maybe the '---' line
             # isn't present.
-            continue
-        for recipe_key, recipe in tagged_data.items():
+            tagged_data = {}
+
+        is_system_requirement = 'system_requirement' in tagged_data
+
+        # Extract the complete YAML header and store its text for later parsing.
+        with open(f'{temp_dir}/{orig_basename}.head.yaml', 'wb') as headerf:
+            headerf.write(yaml_text)
+            yield FilePart('yaml', input_file.name, headerf.name, 0, 0,
+                           tagged_data, None, is_system_requirement)
+
+        # Extract the main build script.
+        with open(f'{temp_dir}/{orig_basename}.script.sh', 'wb') as scriptf:
+            scriptf.write(script_text := recipe[separator_position + 4:])
+            # Add 1 to line offset for the separator line.
+            yield FilePart('script', input_file.name, scriptf.name,
+                           yaml_text.count(b'\n') + 1, 0,
+                           script_text.decode('utf-8'), None,
+                           is_system_requirement)
+
+        # Extract scripts embedded in YAML header, e.g. incremental_recipe.
+        for recipe_key, recipe_text in tagged_data.items():
             if not isinstance(recipe_key, str):
                 continue
             if not (recipe_key.endswith('_recipe') or
@@ -157,15 +190,13 @@ def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
             column_offset -= 1   # first column is 1, but this is an offset
             with open(f'{temp_dir}/{orig_basename}.{recipe_key}.sh', 'w',
                       encoding='utf-8') as scriptf:
-                scriptf.write(recipe)
-                script_parts[scriptf.name] = \
-                    input_file.name, line_offset, column_offset, None
+                scriptf.write(recipe_text)
+                yield FilePart('script', input_file.name, scriptf.name,
+                               line_offset, column_offset, recipe_text,
+                               recipe_key, is_system_requirement)
 
-    return header_parts, script_parts
 
-
-def position_of_key(tagged_object: dict,
-                    path: tuple[str | int, ...]) -> tuple[int, int]:
+def position_of_key(tagged_object: dict, path: ObjectPath) -> tuple[int, int]:
     '''Find the line and column numbers of the specified key.'''
     cur_object_parent = tagged_object
     for path_element in path[:-1]:

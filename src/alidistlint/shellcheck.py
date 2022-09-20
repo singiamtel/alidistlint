@@ -5,11 +5,13 @@ from subprocess import run, PIPE, DEVNULL
 import sys
 from typing import Iterable
 
-from alidistlint.common import Error, FileParts
+from alidistlint.common import Error, FilePart
 
 
-def shellcheck(recipes: FileParts) -> Iterable[Error]:
+def shellcheck(recipes: Iterable[FilePart]) -> Iterable[Error]:
     '''Run shellcheck on a recipe.'''
+    by_temp_name = {recipe.temp_file_name: recipe for recipe in recipes
+                    if recipe.file_type == 'script'}
     # See shellcheck --list-optional.
     enabled_optional_checks = ','.join((
         # Suggest explicitly using -n in `[ $var ]`.
@@ -18,7 +20,7 @@ def shellcheck(recipes: FileParts) -> Iterable[Error]:
         'check-set-e-suppressed',
     ))
     cmd = 'shellcheck', '--format=json1', '--shell=bash', \
-        '--enable', enabled_optional_checks, *recipes.keys()
+        '--enable', enabled_optional_checks, *by_temp_name.keys()
     try:
         result = run(cmd, stdout=PIPE, stderr=DEVNULL, text=True, check=False)
     except FileNotFoundError:
@@ -30,14 +32,13 @@ def shellcheck(recipes: FileParts) -> Iterable[Error]:
     except (json.JSONDecodeError, KeyError) as exc:
         raise ValueError('failed to parse shellcheck output') from exc
     for comment in comments:
-        orig_file_name, line_offset, column_offset, _ = \
-            recipes[comment['file']]
+        recipe = by_temp_name[comment['file']]
         yield Error(
             comment['level'],
             f"{comment['message']} [SC{comment['code']}]",
-            orig_file_name,
-            comment['line'] + line_offset,
-            comment['column'] + column_offset,
-            comment['endLine'] + line_offset,
-            comment['endColumn'] + column_offset,
+            recipe.orig_file_name,
+            comment['line'] + recipe.line_offset,
+            comment['column'] + recipe.column_offset,
+            comment['endLine'] + recipe.line_offset,
+            comment['endColumn'] + recipe.column_offset,
         )
