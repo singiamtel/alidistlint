@@ -1,0 +1,45 @@
+---
+name: Publish release
+
+'on':
+  push:
+    tags:
+      - 'v**'
+  release:
+    types:
+      - published
+
+permissions: {}
+
+jobs:
+  pypi:
+    name: PyPI
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: read
+
+    steps:
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.x
+
+      - name: Install prerequisites
+        run: python3 -m pip install build twine
+
+      - name: Checkout tag
+        uses: actions/checkout@v3
+
+      - name: Build release distributions
+        run: python3 -m build --wheel --dist
+
+      # Make sure the wheel and source dist we've just built are valid.
+      # pypa/gh-action-pypi-publish checks this, but recommends we do too.
+      - name: Check distributions are valid
+        run: twine check dist/*
+
+      - name: Publish distribution to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.pypi_token }}
