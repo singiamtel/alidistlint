@@ -20,13 +20,8 @@ jobs:
       contents: read
 
     steps:
-      - name: Setup Python
-        uses: actions/setup-python@v4
-        with:
-          python-version: 3.x
-
       - name: Install prerequisites
-        run: python3 -m pip install build twine
+        run: python3 -m pip install --user build twine
 
       - name: Checkout tag
         uses: actions/checkout@v3
@@ -37,7 +32,7 @@ jobs:
       # Make sure the wheel and source dist we've just built are valid.
       # pypa/gh-action-pypi-publish checks this, but recommends we do too.
       - name: Check distributions are valid
-        run: twine check dist/*
+        run: python3 -m twine check dist/*
 
       - name: Publish distribution to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
