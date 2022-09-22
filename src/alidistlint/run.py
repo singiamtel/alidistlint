@@ -1,4 +1,4 @@
-'''Run alidistlint as a command-line script.'''
+"""Run alidistlint as a command-line script."""
 
 from argparse import ArgumentParser, FileType, Namespace
 import itertools
@@ -11,7 +11,7 @@ from alidistlint import common, yamllint, shellcheck, headerlint
 
 
 def run_with_args(args: Namespace) -> int:
-    '''Functional script entry point, returning the desired exit code.'''
+    """Functional script entry point, returning the desired exit code."""
     formatter = common.ERROR_FORMATTERS[args.format]
     progname = os.path.basename(sys.argv[0])
     have_error = False
@@ -29,11 +29,11 @@ def run_with_args(args: Namespace) -> int:
 
 
 def parse_args() -> Namespace:
-    '''Parse and return command-line arguments.'''
+    """Parse and return command-line arguments."""
     parser = ArgumentParser(description=__doc__, epilog='''\
     Errors and warnings will be printed to standard output in the format you
-    selected. If any messages with "error" severity were produced, `alidistlint`
-    exits with a non-zero exit code.
+    selected. If any messages with "error" severity were produced,
+    `alidistlint` exits with a non-zero exit code.
     ''')
     parser.add_argument('-S', '--no-shellcheck', action='store_true',
                         help="don't run shellcheck on the main script")
@@ -52,5 +52,5 @@ def parse_args() -> Namespace:
 
 
 def main() -> NoReturn:
-    '''Script entry point; parse args, run and exit.'''
+    """Script entry point; parse args, run and exit."""
     sys.exit(run_with_args(parse_args()))

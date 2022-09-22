@@ -1,4 +1,4 @@
-'''Internal linter checking YAML headers for alidistlint.'''
+"""Internal linter checking YAML headers for alidistlint."""
 
 import re
 import os.path
@@ -7,21 +7,22 @@ from typing import Any, Iterable
 import cerberus
 import yaml
 
-from alidistlint.common import Error, FileParts, position_of_key, TrackedLocationLoader
+from alidistlint.common import Error, FileParts, TrackedLocationLoader, \
+    position_of_key
 
 ValidationErrors = list[str | dict[Any, 'ValidationErrors']]
 ValidationErrorTree = str | dict[Any, ValidationErrors] | ValidationErrors
-'''An error tree as produced by cerberus.'''
+"""An error tree as produced by cerberus."""
 
 ObjectPath = tuple[str | int, ...]
-'''Specifies where in a nested object a value is located as a series of keys.
+"""Specifies where in a nested object a value is located as a series of keys.
 
 For instance, A is at path (0, "a") in the object [{"a": A}].
-'''
+"""
 
 
 def get_schema_for_file(file_name: str) -> dict:
-    '''Construct a schema to validate the YAML header of the given file.'''
+    """Construct a schema to validate the YAML header of the given file."""
     def package_name_matches(field, value, error):
         basename = os.path.basename(file_name)
         if not isinstance(value, str):
@@ -59,8 +60,8 @@ def get_schema_for_file(file_name: str) -> dict:
     def version_string_ok(field, value, error):
         if not isinstance(value, str):
             error(field, 'must be a string')
-        elif not file_name.startswith('defaults-') and \
-             '%(defaults_upper)s' in value:
+        elif (not file_name.startswith('defaults-') and
+              '%(defaults_upper)s' in value):
             error(field, 'cannot use %(defaults_upper)s in non-default recipe')
 
     def is_valid_regex(field, value, error):
@@ -159,7 +160,7 @@ def emit_validation_errors(error_tree: ValidationErrorTree,
                            file_name: str,
                            line_offset: int, column_offset: int,
                            path: ObjectPath = ()) -> Iterable[Error]:
-    '''Parse any validation errors from a cerberus validator.'''
+    """Parse any validation errors from a cerberus validator."""
     if isinstance(error_tree, dict):
         for key, suberrors in error_tree.items():
             yield from emit_validation_errors(
@@ -183,7 +184,7 @@ def emit_validation_errors(error_tree: ValidationErrorTree,
 
 def check_keys_order(data: dict[str, Any], orig_file_name: str,
                      line_offset: int, column_offset: int) -> Iterable[Error]:
-    '''Produce errors relating to key order in the YAML header data.'''
+    """Produce errors relating to key order in the YAML header data."""
     def make_error(message: str, key: str) -> Error:
         rel_line, rel_column = position_of_key(data, (key,))
         return Error('error', f'{message} [ali:key-order]', orig_file_name,
@@ -222,7 +223,7 @@ def check_keys_order(data: dict[str, Any], orig_file_name: str,
 
 
 def headerlint(headers: FileParts) -> Iterable[Error]:
-    '''Apply alidist-specific linting rules to YAML headers.'''
+    """Apply alidist-specific linting rules to YAML headers."""
     def make_error(message: str, code: str,
                    rel_line: int, rel_column: int) -> Error:
         return Error('error', f'{message} [ali:{code}]', orig_file_name,

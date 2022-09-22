@@ -1,4 +1,4 @@
-'''Shellcheck backend for alidistlint.'''
+"""Shellcheck backend for alidistlint."""
 
 import json
 from subprocess import run, PIPE, DEVNULL
@@ -9,7 +9,7 @@ from alidistlint.common import Error, FileParts
 
 
 def shellcheck(recipes: FileParts) -> Iterable[Error]:
-    '''Run shellcheck on a recipe.'''
+    """Run shellcheck on a recipe."""
     # See shellcheck --list-optional.
     enabled_optional_checks = ','.join((
         # Suggest explicitly using -n in `[ $var ]`.

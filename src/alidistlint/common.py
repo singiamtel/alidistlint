@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-'''Lint alidist recipes using yamllint and shellcheck.'''
+"""Lint alidist recipes using yamllint and shellcheck."""
 
 import os.path
 from typing import BinaryIO, Callable, Iterable, NamedTuple
@@ -22,19 +22,20 @@ GITHUB_LEVELS: dict[str, str] = {
 }
 
 FileParts = dict[str, tuple[str, int, int, bytes | None]]
-'''Map temporary file name to original file name and line/column offsets.
+"""Map temporary file name to original file name and line/column offsets.
 
 For FileParts of YAML header data, also includes the content of the file part,
 for direct processing. For FileParts of scripts, this is None instead.
-'''
+"""
 
 
 class Error(NamedTuple):
-    '''A linter message.
+    """A linter message.
 
     Instances should contain line and column numbers relative to the original
     input file, not relative to any FileParts that might have been used.
-    '''
+    """
+
     level: str
     message: str
     file_name: str
@@ -44,16 +45,16 @@ class Error(NamedTuple):
     end_column: int | None = None
 
     def format_gcc(self) -> str:
-        '''Turn the Error into a string like a GCC error message.'''
+        """Turn the Error into a string like a GCC error message."""
         return (f'{self.file_name}:{self.line}:{self.column}: '
                 f'{GCC_LEVELS[self.level]}: {self.message}')
 
     def format_github(self) -> str:
-        '''Turn the Error into a string that GitHub understands.
+        """Turn the Error into a string that GitHub understands.
 
         If printed from a GitHub Action, this will show the error messages in
         the Files view.
-        '''
+        """
         end_line = '' if self.end_line is None else f',endLine={self.end_line}'
         end_column = '' if self.end_column is None else \
             f',endColumn={self.end_column}'
@@ -70,19 +71,22 @@ ERROR_FORMATTERS: dict[str, Callable[[Error], str]] = {
 
 # pylint: disable=too-many-ancestors
 class TrackedLocationLoader(yaml.loader.SafeLoader):
-    '''Load YAML documents while keeping track of keys' line and column.
+    """Load YAML documents while keeping track of keys' line and column.
 
     We need to override construct_sequence to track the location of list items,
     and construct_mapping to track the location of keys.
 
     See also: https://stackoverflow.com/q/13319067
-    '''
+    """
+
     def construct_sequence(self, node, deep=False):
+        """Construct a sequence, storing the source locations of its values."""
         sequence = super().construct_sequence(node, deep)
         sequence.append([item_node.start_mark for item_node in node.value])
         return sequence
 
     def construct_mapping(self, node, deep=False):
+        """Construct a mapping, storing the source locations of its keys."""
         mapping = super().construct_mapping(node, deep=deep)
         mapping['_locations'] = {
             # Keys aren't necessarily strings, so parse them in YAML.
@@ -93,12 +97,12 @@ class TrackedLocationLoader(yaml.loader.SafeLoader):
 
     @staticmethod
     def remove_trackers(data):
-        '''Remove temporary location tracker items.
+        """Remove temporary location tracker items.
 
         Original file locations are tracked using special properties and list
         items and used for more informative error messages, but they should not
         be present for schema validation, for example.
-        '''
+        """
         if isinstance(data, dict):
             return {key: TrackedLocationLoader.remove_trackers(value)
                     for key, value in data.items()
@@ -111,7 +115,7 @@ class TrackedLocationLoader(yaml.loader.SafeLoader):
 
 def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
         -> tuple[FileParts, FileParts]:
-    '''Split every given file into its YAML header and script part.'''
+    """Split every given file into its YAML header and script part."""
     header_parts: FileParts = {}
     script_parts: FileParts = {}
     for input_file in input_files:
@@ -121,7 +125,7 @@ def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
         separator_position = recipe.find(b'\n---\n') + 1
         yaml_text = recipe[:separator_position]
 
-        # Extract the complete YAML header and store its text for later parsing.
+        # Extract the complete YAML header and store it for later parsing.
         with open(f'{temp_dir}/{orig_basename}.head.yaml', 'wb') as headerf:
             headerf.write(yaml_text)
             header_parts[headerf.name] = input_file.name, 0, 0, yaml_text
@@ -166,7 +170,7 @@ def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
 
 def position_of_key(tagged_object: dict,
                     path: tuple[str | int, ...]) -> tuple[int, int]:
-    '''Find the line and column numbers of the specified key.'''
+    """Find the line and column numbers of the specified key."""
     cur_object_parent = tagged_object
     for path_element in path[:-1]:
         cur_object_parent = cur_object_parent[path_element]

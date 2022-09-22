@@ -1,4 +1,4 @@
-'''Yamllint backend for alidistlint.'''
+"""Yamllint backend for alidistlint."""
 
 import json
 import re
@@ -19,7 +19,7 @@ LINE_PATTERN: re.Pattern = re.compile(r'''
 
 
 def yamllint(headers: FileParts) -> Iterable[Error]:
-    '''Run yamllint on a recipe's YAML header.'''
+    """Run yamllint on a recipe's YAML header."""
     cmd = 'yamllint', '-f', 'parsable', '-d', json.dumps({
         # https://yamllint.readthedocs.io/en/stable/configuration.html
         'extends': 'default',
