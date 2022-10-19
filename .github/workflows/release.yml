@@ -27,7 +27,7 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Build release distributions
-        run: python3 -m build --wheel --dist
+        run: python3 -m build -o dist
 
       # Make sure the wheel and source dist we've just built are valid.
       # pypa/gh-action-pypi-publish checks this, but recommends we do too.
