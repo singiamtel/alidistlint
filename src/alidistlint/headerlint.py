@@ -57,12 +57,29 @@ def get_schema_for_file(file_name: str) -> dict:
             } if allow_list_values else {'type': 'string'},
         }
 
-    def version_string_ok(field, value, error):
+    def is_valid_version_string(field, value, error):
         if not isinstance(value, str):
             error(field, 'must be a string')
-        elif (not file_name.startswith('defaults-') and
-              '%(defaults_upper)s' in value):
-            error(field, 'cannot use %(defaults_upper)s in non-default recipe')
+            return
+
+        for match in re.finditer(r'%[^%(]|%$', value):
+            error(field, f'invalid substitution type {match.group(0)!r}; '
+                  "use only %(...)s (or use '%%' if you want a literal '%')")
+
+        try:
+            # The keys listed below all expand to strings normally.
+            # Assigning 'placeholder' also catches TypeErrors.
+            _ = value % {key: 'placeholder' for key in {
+                'branch_basename', 'branch_stream', 'commit_hash',
+                'short_hash', 'tag', 'tag_basename', 'defaults_upper',
+                'year', 'month', 'day', 'hour',
+            }}
+        except KeyError as exc:
+            error(field, f'substitution variable {exc} is invalid')
+        except TypeError:
+            error(field, f'invalid substitution type; use only %(...)s')
+        except ValueError as exc:
+            error(field, f'%-format error: {exc}')
 
     def is_valid_regex(field, value, error):
         try:
@@ -97,7 +114,7 @@ def get_schema_for_file(file_name: str) -> dict:
 
     # This contains most keys, and can be used in other packages' override:.
     override_package = {
-        'version': {'type': 'string', 'check_with': version_string_ok},
+        'version': {'type': 'string', 'check_with': is_valid_version_string},
         'tag': {'type': 'string'},
         'source': git_url,
         'write_repo': git_url,
@@ -144,7 +161,7 @@ def get_schema_for_file(file_name: str) -> dict:
         'version': {
             'required': True,
             'type': 'string',
-            'check_with': version_string_ok,
+            'check_with': is_valid_version_string,
         },
         'disable': {'type': 'list', 'schema': {'type': 'string'}},
         'overrides': {
