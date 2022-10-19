@@ -25,10 +25,10 @@ def yamllint(headers: FileParts) -> Iterable[Error]:
         'extends': 'default',
         'rules': {
             # Be more lenient on line length, e.g. for incremental_recipe.
-            'line-length': {'max': 120},
+            'line-length': {'max': 120, 'level': 'warning'},
             # Force 2-space indents. By default, yamllint only checks for
             # consistent indent width *within the file*, not across files.
-            'indentation': {'spaces': 2},
+            'indentation': {'spaces': 2, 'level': 'warning'},
             # YAML headers don't have a '---' line at the beginning.
             'document-start': 'disable',
             # Empty values are null, which we don't want.
