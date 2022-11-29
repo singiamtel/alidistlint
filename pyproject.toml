@@ -1,7 +1,7 @@
 [project]
 name = "alidistlint"
 description = "A code linter for alidist packages"
-version = "1.1.0"
+version = "1.1.1"
 readme = "README.md"
 requires-python = ">=3.6"
 classifiers = [
