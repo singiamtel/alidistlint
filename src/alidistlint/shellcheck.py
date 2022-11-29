@@ -17,8 +17,13 @@ def shellcheck(recipes: FileParts) -> Iterable[Error]:
         # Notify when set -e is suppressed during function invocation.
         'check-set-e-suppressed',
     ))
-    cmd = 'shellcheck', '--format=json1', '--shell=bash', \
-        '--enable', enabled_optional_checks, *recipes.keys()
+    disabled_checks = ','.join((
+        # "Not following: * was not specified as input (see shellcheck -x)."
+        'SC1091',
+    ))
+    cmd = 'shellcheck', '--format=json1', '--shell=bash', '--norc', \
+        '--enable', enabled_optional_checks, '--exclude', disabled_checks, \
+        *recipes.keys()
     try:
         result = run(cmd, stdout=PIPE, stderr=DEVNULL, text=True, check=False)
     except FileNotFoundError:
