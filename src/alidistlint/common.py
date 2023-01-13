@@ -3,7 +3,7 @@
 """Lint alidist recipes using yamllint and shellcheck."""
 
 import os.path
-from typing import BinaryIO, Callable, Iterable, NamedTuple
+from typing import Any, BinaryIO, Callable, Iterable, NamedTuple, Sequence
 
 import yaml
 
@@ -21,12 +21,32 @@ GITHUB_LEVELS: dict[str, str] = {
     'style': 'notice',
 }
 
-FileParts = dict[str, tuple[str, int, int, bytes | None]]
-"""Map temporary file name to original file name and line/column offsets.
 
-For FileParts of YAML header data, also includes the content of the file part,
-for direct processing. For FileParts of scripts, this is None instead.
-"""
+class YAMLFilePart(NamedTuple):
+    """Metadata for a part of a file to be checked.
+
+    This contains metadata for the YAML header, and the header itself, as a
+    parsed YAML object, or None if the YAML header could not be parsed.
+    """
+    orig_file_name: str
+    line_offset: int
+    column_offset: int
+    content: Any
+
+
+class ScriptFilePart(NamedTuple):
+    """A script part of an alidist recipe.
+
+    This contains metadata of the script, the script text itself, and
+    additional information parsed from any associated YAML header. This
+    additional information is used for 'scriptlint' checks.
+    """
+    orig_file_name: str
+    line_offset: int
+    column_offset: int
+    content: bytes
+    key_name: str | None   # None means "this is the main recipe"
+    is_system_requirement: bool
 
 
 class Error(NamedTuple):
@@ -113,47 +133,84 @@ class TrackedLocationLoader(yaml.loader.SafeLoader):
         return data
 
 
+def parse_yaml_header_tagged(yaml_text: bytes, orig_file_name: str,
+                             line_offset: int, column_offset: int) \
+                             -> dict | Error:
+    """Parse the given YAML header text, checking for basic sanity."""
+    if not yaml_text:
+        return Error('error', f'metadata not found or empty (is the '
+                     "'\\n---\\n' separator present?) [ali:empty]",
+                     orig_file_name, line_offset + 1, column_offset)
+
+    # Parse the source YAML, keeping track of the locations of keys.
+    try:
+        parsed_yaml = yaml.load(yaml_text, TrackedLocationLoader)
+    except yaml.MarkedYAMLError as exc:
+        mark = exc.problem_mark
+        return Error('error', f'YAML parse error: {exc.problem} [ali:parse]',
+                     orig_file_name,
+                     1 if mark is None else mark.line,
+                     0 if mark is None else mark.column)
+    except yaml.YAMLError as exc:
+        return Error('error', f'unknown YAML parse error: {exc} [ali:parse]',
+                     orig_file_name, line_offset + 1, column_offset)
+
+    # We expect a dictionary here.
+    if not isinstance(parsed_yaml, dict):
+        return Error('error', 'expected YAML header to be a dictionary; got a '
+                     f'{type(parsed_yaml).__name__} instead [ali:parse]',
+                     orig_file_name, line_offset + 1, column_offset)
+    return parsed_yaml
+
+
 def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
-        -> tuple[FileParts, FileParts]:
+        -> tuple[Sequence[Error],
+                 dict[str, YAMLFilePart],
+                 dict[str, ScriptFilePart]]:
     """Split every given file into its YAML header and script part."""
-    header_parts: FileParts = {}
-    script_parts: FileParts = {}
+    errors: list[Error] = []
+    header_parts: dict[str, YAMLFilePart] = {}
+    script_parts: dict[str, ScriptFilePart] = {}
     for input_file in input_files:
         orig_basename = os.path.basename(input_file.name)
         recipe = input_file.read()
         # Get the first byte of the '---\n' line (excluding the prev newline).
         separator_position = recipe.find(b'\n---\n') + 1
         yaml_text = recipe[:separator_position]
+        parsed_yaml = parse_yaml_header_tagged(yaml_text, input_file.name, 0, 0)
+        if isinstance(parsed_yaml, Error):
+            errors.append(parsed_yaml)
+            parsed_yaml = None
 
         # Extract the complete YAML header and store it for later parsing.
         with open(f'{temp_dir}/{orig_basename}.head.yaml', 'wb') as headerf:
             headerf.write(yaml_text)
-            header_parts[headerf.name] = input_file.name, 0, 0, yaml_text
+            header_parts[headerf.name] = \
+                YAMLFilePart(input_file.name, 0, 0, parsed_yaml)
+
+        is_system_requirement: bool = \
+            parsed_yaml is not None and 'system_requirement' in parsed_yaml
 
         # Extract the main recipe script.
         with open(f'{temp_dir}/{orig_basename}.script.sh', 'wb') as scriptf:
-            scriptf.write(recipe[separator_position + 4:])
-            # Add 1 to line offset for the separator line.
-            script_parts[scriptf.name] = \
-                input_file.name, yaml_text.count(b'\n') + 1, 0, None
+            script = recipe[separator_position + 4:]
+            scriptf.write(script)
+            script_parts[scriptf.name] = ScriptFilePart(
+                # Add 1 to line offset for the separator line.
+                input_file.name, yaml_text.count(b'\n') + 1, 0, script, None,
+                is_system_requirement,
+            )
 
         # Extract recipes embedded in YAML header, e.g. incremental_recipe.
-        try:
-            tagged_data = yaml.load(yaml_text, TrackedLocationLoader)
-        except yaml.YAMLError:
-            # If we can't even load the YAML, skip checking embedded recipes.
+        if parsed_yaml is None:
             continue
-        if not isinstance(tagged_data, dict):
-            # Something went wrong loading the YAML -- maybe the '---' line
-            # isn't present.
-            continue
-        for recipe_key, recipe in tagged_data.items():
+        for recipe_key, recipe in parsed_yaml.items():
             if not isinstance(recipe_key, str):
                 continue
             if not (recipe_key.endswith('_recipe') or
                     recipe_key.endswith('_check')):
                 continue
-            line_offset, column_offset = position_of_key(tagged_data,
+            line_offset, column_offset = position_of_key(parsed_yaml,
                                                          (recipe_key,))
             line_offset += 1     # assume values start on a new line
             line_offset -= 1     # first line is 1, but this is an offset
@@ -162,10 +219,12 @@ def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
             with open(f'{temp_dir}/{orig_basename}.{recipe_key}.sh', 'w',
                       encoding='utf-8') as scriptf:
                 scriptf.write(recipe)
-                script_parts[scriptf.name] = \
-                    input_file.name, line_offset, column_offset, None
+                script_parts[scriptf.name] = ScriptFilePart(
+                    input_file.name, line_offset, column_offset,
+                    recipe.encode('utf-8'), recipe_key, is_system_requirement,
+                )
 
-    return header_parts, script_parts
+    return errors, header_parts, script_parts
 
 
 def position_of_key(tagged_object: dict,

@@ -4,10 +4,9 @@ import re
 import os.path
 from typing import Any, Iterable
 
-import cerberus
-import yaml
+from cerberus import Validator
 
-from alidistlint.common import Error, FileParts, TrackedLocationLoader, \
+from alidistlint.common import Error, YAMLFilePart, TrackedLocationLoader, \
     position_of_key
 
 ValidationErrors = list[str | dict[Any, 'ValidationErrors']]
@@ -239,56 +238,24 @@ def check_keys_order(data: dict[str, Any], orig_file_name: str,
                          'declaration (as version is not present)', 'tag')
 
 
-def headerlint(headers: FileParts) -> Iterable[Error]:
+def headerlint(headers: dict[str, YAMLFilePart]) -> Iterable[Error]:
     """Apply alidist-specific linting rules to YAML headers."""
-    def make_error(message: str, code: str,
-                   rel_line: int, rel_column: int) -> Error:
-        return Error('error', f'{message} [ali:{code}]', orig_file_name,
-                     rel_line + line_offset, rel_column + column_offset)
-
     for header in headers.values():  # we don't need the temporary file
-        orig_file_name, line_offset, column_offset, yaml_text = header
-        if not yaml_text:
-            yield make_error('metadata not found or empty '
-                             "(is the '\\n---\\n' separator present?)",
-                             'empty', 1, 0)
-            return
-
-        # Parse the source YAML, keeping track of the locations of keys.
-        try:
-            tagged_data = yaml.load(yaml_text, TrackedLocationLoader)
-        except yaml.MarkedYAMLError as exc:
-            mark = exc.problem_mark
-            yield make_error(f'parse error: {exc.problem}', 'parse',
-                             1 if mark is None else mark.line,
-                             0 if mark is None else mark.column)
-            continue
-        except yaml.YAMLError as exc:
-            yield make_error(f'unknown error parsing YAML: {exc}',
-                             'parse', 1, 0)
-            continue
-
-        # Run schema validation against the "clean" data, without source
-        # location markers.
-        pure_data = TrackedLocationLoader.remove_trackers(tagged_data)
-
-        # Basic sanity check.
-        if not isinstance(pure_data, dict):
-            yield make_error('recipe metadata must be a dictionary '
-                             f'(got a {type(pure_data)} instead)',
-                             'toplevel-nondict', 1, 0)
-            continue
-
         # Make sure values have the types that they should.
-        validator = cerberus.Validator(get_schema_for_file(orig_file_name))
-        if not validator.validate(pure_data):
-            yield from emit_validation_errors(validator.errors, tagged_data,
-                                              orig_file_name,
-                                              line_offset, column_offset)
+        validator = Validator(get_schema_for_file(header.orig_file_name))
+        if not validator.validate(
+                # Run schema validation against the "clean" data, without
+                # source location markers.
+                TrackedLocationLoader.remove_trackers(header.content)
+        ):
+            yield from emit_validation_errors(
+                validator.errors, header.content, header.orig_file_name,
+                header.line_offset, header.column_offset,
+            )
 
         # Make sure the order of the most important keys is correct.
-        yield from check_keys_order(tagged_data, orig_file_name,
-                                    line_offset, column_offset)
-        for tagged_override_data in tagged_data.get('overrides', {}).values():
-            yield from check_keys_order(tagged_override_data, orig_file_name,
-                                        line_offset, column_offset)
+        yield from check_keys_order(header.content, header.orig_file_name,
+                                    header.line_offset, header.column_offset)
+        for override_data in header.content.get('overrides', {}).values():
+            yield from check_keys_order(override_data, header.orig_file_name,
+                                        header.line_offset, header.column_offset)

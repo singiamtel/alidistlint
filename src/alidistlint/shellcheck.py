@@ -5,10 +5,10 @@ from subprocess import run, PIPE, DEVNULL
 import sys
 from typing import Iterable
 
-from alidistlint.common import Error, FileParts
+from alidistlint.common import Error, ScriptFilePart
 
 
-def shellcheck(recipes: FileParts) -> Iterable[Error]:
+def shellcheck(recipes: dict[str, ScriptFilePart]) -> Iterable[Error]:
     """Run shellcheck on a recipe."""
     # See shellcheck --list-optional.
     enabled_optional_checks = ','.join((
@@ -35,14 +35,13 @@ def shellcheck(recipes: FileParts) -> Iterable[Error]:
     except (json.JSONDecodeError, KeyError) as exc:
         raise ValueError('failed to parse shellcheck output') from exc
     for comment in comments:
-        orig_file_name, line_offset, column_offset, _ = \
-            recipes[comment['file']]
+        part = recipes[comment['file']]
         yield Error(
             comment['level'],
             f"{comment['message']} [SC{comment['code']}]",
-            orig_file_name,
-            comment['line'] + line_offset,
-            comment['column'] + column_offset,
-            comment['endLine'] + line_offset,
-            comment['endColumn'] + column_offset,
+            part.orig_file_name,
+            comment['line'] + part.line_offset,
+            comment['column'] + part.column_offset,
+            comment['endLine'] + part.line_offset,
+            comment['endColumn'] + part.column_offset,
         )

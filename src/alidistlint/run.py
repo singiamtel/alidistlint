@@ -16,8 +16,9 @@ def run_with_args(args: Namespace) -> int:
     progname = os.path.basename(sys.argv[0])
     have_error = False
     with tempfile.TemporaryDirectory(prefix=progname) as tempdir:
-        headers, scripts = common.split_files(tempdir, args.recipes)
+        errors, headers, scripts = common.split_files(tempdir, args.recipes)
         errors = itertools.chain(
+            errors,
             () if args.no_headerlint else headerlint.headerlint(headers),
             () if args.no_yamllint else yamllint.yamllint(headers),
             () if args.no_shellcheck else shellcheck.shellcheck(scripts),
@@ -36,7 +37,7 @@ def parse_args() -> Namespace:
     `alidistlint` exits with a non-zero exit code.
     ''')
     parser.add_argument('-S', '--no-shellcheck', action='store_true',
-                        help="don't run shellcheck on the main script")
+                        help="don't run shellcheck on each script")
     parser.add_argument('-Y', '--no-yamllint', action='store_true',
                         help="don't run yamllint on the header")
     parser.add_argument('-H', '--no-headerlint', action='store_true',

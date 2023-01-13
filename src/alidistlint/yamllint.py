@@ -6,7 +6,7 @@ from subprocess import run, PIPE, DEVNULL
 import sys
 from typing import Iterable
 
-from alidistlint.common import Error, FileParts
+from alidistlint.common import Error, YAMLFilePart
 
 LINE_PATTERN: re.Pattern = re.compile(r'''
 ^  (?P<fname>   .+?   )    :   # file name, be non-greedy
@@ -18,7 +18,7 @@ LINE_PATTERN: re.Pattern = re.compile(r'''
 ''', re.VERBOSE)
 
 
-def yamllint(headers: FileParts) -> Iterable[Error]:
+def yamllint(headers: dict[str, YAMLFilePart]) -> Iterable[Error]:
     """Run yamllint on a recipe's YAML header."""
     cmd = 'yamllint', '-f', 'parsable', '-d', json.dumps({
         # https://yamllint.readthedocs.io/en/stable/configuration.html
@@ -54,11 +54,11 @@ def yamllint(headers: FileParts) -> Iterable[Error]:
     for line in result.stdout.splitlines():
         if not (match := re.search(LINE_PATTERN, line)):
             raise ValueError(f'could not parse yamllint output line {line!r}')
-        orig_file_name, line_offset, column_offset, _ = headers[match['fname']]
+        part = headers[match['fname']]
         yield Error(
             match['level'],
             f"{match['message']} [yl:{match['code']}]",
-            orig_file_name,
-            int(match['line']) + line_offset,
-            int(match['column']) + column_offset,
+            part.orig_file_name,
+            int(match['line']) + part.line_offset,
+            int(match['column']) + part.column_offset,
         )
