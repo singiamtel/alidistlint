@@ -203,7 +203,7 @@ def check_keys_order(data: dict[str, Any], orig_file_name: str,
     """Produce errors relating to key order in the YAML header data."""
     def make_error(message: str, key: str) -> Error:
         rel_line, rel_column = position_of_key(data, (key,))
-        return Error('error', f'{message} [ali:key-order]', orig_file_name,
+        return Error('warning', f'{message} [ali:key-order]', orig_file_name,
                      rel_line + line_offset, rel_column + column_offset)
 
     keys = list(data.keys())

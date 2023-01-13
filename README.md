@@ -78,7 +78,7 @@ There is currently no way to disable individual checks.
 - `ali:schema` (error):
   The YAML header did not conform to its schema.
   See the error message for more details.
-- `ali:key-order` (error):
+- `ali:key-order` (warning):
   The `package`, `version` and `tag` keys were not found in the correct order.
   These keys should be the first in the file, in the above order (if present).
   Additionally, the `requires` key must come before `build_requires`.
