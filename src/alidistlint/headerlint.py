@@ -241,6 +241,11 @@ def check_keys_order(data: dict[str, Any], orig_file_name: str,
 def headerlint(headers: dict[str, YAMLFilePart]) -> Iterable[Error]:
     """Apply alidist-specific linting rules to YAML headers."""
     for header in headers.values():  # we don't need the temporary file
+        if header.content is None:
+            # This header could not be parsed. We'll have already printed an
+            # error message for that.
+            continue
+
         # Make sure values have the types that they should.
         validator = Validator(get_schema_for_file(header.orig_file_name))
         if not validator.validate(

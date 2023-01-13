@@ -3,7 +3,7 @@
 """Lint alidist recipes using yamllint and shellcheck."""
 
 import os.path
-from typing import Any, BinaryIO, Callable, Iterable, NamedTuple, Sequence
+from typing import BinaryIO, Callable, Iterable, NamedTuple, Sequence
 
 import yaml
 
@@ -31,7 +31,7 @@ class YAMLFilePart(NamedTuple):
     orig_file_name: str
     line_offset: int
     column_offset: int
-    content: Any
+    content: dict | None
 
 
 class ScriptFilePart(NamedTuple):
