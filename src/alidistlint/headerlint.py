@@ -68,15 +68,15 @@ def get_schema_for_file(file_name: str) -> dict:
         try:
             # The keys listed below all expand to strings normally.
             # Assigning 'placeholder' also catches TypeErrors.
-            _ = value % {key: 'placeholder' for key in {
+            _ = value % {key: 'placeholder' for key in (
                 'branch_basename', 'branch_stream', 'commit_hash',
                 'short_hash', 'tag', 'tag_basename', 'defaults_upper',
                 'year', 'month', 'day', 'hour',
-            }}
+            )}
         except KeyError as exc:
             error(field, f'substitution variable {exc} is invalid')
         except TypeError:
-            error(field, f'invalid substitution type; use only %(...)s')
+            error(field, 'invalid substitution type; use only %(...)s')
         except ValueError as exc:
             error(field, f'%-format error: {exc}')
 

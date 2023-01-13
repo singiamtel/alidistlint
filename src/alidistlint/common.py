@@ -138,7 +138,7 @@ def parse_yaml_header_tagged(yaml_text: bytes, orig_file_name: str,
                              -> dict | Error:
     """Parse the given YAML header text, checking for basic sanity."""
     if not yaml_text:
-        return Error('error', f'metadata not found or empty (is the '
+        return Error('error', 'metadata not found or empty (is the '
                      "'\\n---\\n' separator present?) [ali:empty]",
                      orig_file_name, line_offset + 1, column_offset)
 
