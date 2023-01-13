@@ -216,6 +216,13 @@ def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
             line_offset -= 1     # first line is 1, but this is an offset
             column_offset += 2   # yamllint requires 2-space indents
             column_offset -= 1   # first column is 1, but this is an offset
+            if not isinstance(recipe, str):
+                errors.append(Error(
+                    'error', 'script must be a string, not a '
+                    f'{type(recipe).__name__} [ali:script-type]',
+                    input_file.name, line_offset, column_offset,
+                ))
+                continue
             with open(f'{temp_dir}/{orig_basename}.{recipe_key}.sh', 'w',
                       encoding='utf-8') as scriptf:
                 scriptf.write(recipe)
