@@ -31,17 +31,18 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
                 'manually-created Modulefile', 'missing-modulefile', 0, 0,
             )
 
-        # At least the main script and the incremental_recipe should start with
-        # the proper shebang. This lets shellcheck know that we use "bash -e"
-        # to run scripts. For small recipes (like system_requirement_check),
-        # this is probably more annoying than useful.
-        if (script.key_name in (None, 'incremental_recipe') or
-            # If the script already has a shebang, make sure it's correct.
-            script.content.startswith(b'#!')) and \
-           not script.content.startswith(b'#!/bin/bash -e\n'):
+        # Non-trivial scripts should start with the proper shebang. This lets
+        # shellcheck know that we use "bash -e" to run scripts.
+        if not is_defaults_recipe and not script.is_system_requirement and (
+                # For small recipes (like system_requirement_check), this is
+                # probably more annoying than useful.
+                script.key_name in (None, 'incremental_recipe') or
+                # If the script already has a shebang, make sure it's correct.
+                script.content.startswith(b'#!')
+        ) and not script.content.startswith(b'#!/bin/bash -e\n'):
             yield make_error(
                 'invalid or missing script shebang; use "#!/bin/bash -e" to '
-                'match aliBuild script runner', 'bad-shebang', 0, 0, 'warning',
+                'match aliBuild script runner', 'bad-shebang', 0, 0, 'info',
             )
 
         for lineno, line in enumerate(script.content.splitlines()):

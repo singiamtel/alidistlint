@@ -45,7 +45,7 @@ There is currently no way to disable individual checks.
   The linter could not detect the creation of a Modulefile for this package, even though it has determined that one is needed.
   Ideally, use `alibuild-generate-module` to create a Modulefile for you.
   If you're generating a Modulefile yourself, make sure that it starts with a `#%Module1.0` comment and that this string appears in the script.
-- `ali:bad-shebang` (warning):
+- `ali:bad-shebang` (note):
   `aliBuild` runs scripts using `bash -e`.
   Non-trivial scripts (i.e. the "main" script in a recipe and `incremental_recipe`, if provided) must start with a `#!/bin/bash -e` line to signal this to `shellcheck`.
   For other scripts, this check is only enforced if the script in question already has a shebang line, to avoid confusion.
