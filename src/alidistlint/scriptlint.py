@@ -9,13 +9,11 @@ from alidistlint.common import Error, ScriptFilePart
 
 def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
     '''Apply alidist-specific linting rules to build scripts.'''
-    def make_error(message: str, code: str,
-                   rel_line: int, rel_column: int,
+    def make_error(message: str, code: str, rel_line: int, rel_column: int,
                    level: str = 'error') -> Error:
-        return Error(level, f'{message} [ali:{code}]',
-                     script.orig_file_name,
-                     rel_line + script.line_offset,
-                     rel_column + script.column_offset)
+        return Error(level, f'{message} [ali:{code}]', script.orig_file_name,
+                     1 + rel_line + script.line_offset,
+                     1 + rel_column + script.column_offset)
 
     for script in scripts.values():
         modulefile_required = (
