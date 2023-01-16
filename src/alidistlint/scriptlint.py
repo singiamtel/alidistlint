@@ -72,8 +72,10 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
             # DYLD_LIBRARY_PATH when launching children processes, making it
             # completely irrelevant. aliBuild handles rpaths in macOS builds,
             # and any bugs should be fixed there.
-            match = re.search(br'(?!^\s*unset\s+)DYLD_LIBRARY_PATH\b', line)
-            if match:
+            for match in re.finditer(br'\bDYLD_LIBRARY_PATH\b', line):
+                # "unset DYLD_LIBRARY_PATH" lines are fine.
+                if re.fullmatch(br'\s*unset\s+', line[:match.start()]):
+                    continue
                 yield make_error(
                     'DYLD_LIBRARY_PATH is ignored on recent MacOS versions',
                     'dyld-library-path', lineno, match.start(), 'info',
