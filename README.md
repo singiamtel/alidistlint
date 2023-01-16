@@ -41,7 +41,7 @@ There is currently no way to disable individual checks.
 - `ali:script-type` (error):
   The contents of a `*_recipe` or `*_check` value in the YAML header were not parsed as a string.
   Perhaps you used a bare `foo_recipe:`, which results in a `null` value, not an empty string.
-- `ali:missing-modulefile` (error):
+- `ali:missing-modulefile` (note):
   The linter could not detect the creation of a Modulefile for this package, even though it has determined that one is needed.
   Ideally, use `alibuild-generate-module` to create a Modulefile for you.
   If you're generating a Modulefile yourself, make sure that it starts with a `#%Module1.0` comment and that this string appears in the script.
@@ -52,11 +52,11 @@ There is currently no way to disable individual checks.
 - `ali:colons-prepend-path` (error):
   Modules 4 does not allow colons in `prepend-path`, but the linter detected that you used them.
   Use multiple `prepend-path` calls to prepend multiple things to `$PATH` instead.
-- `ali:dyld-library-path` (warning):
+- `ali:dyld-library-path` (note):
   On MacOS, the `DYLD_LIBRARY_PATH` variable is not propagated to subprocesses if System Integrity Protection is enabled.
   Recipes must not rely on this variable.
   If there is a problem and libraries cannot be found at runtime, then `aliBuild`'s relocation code must be fixed.
-- `ali:masked-exitcode` (warning):
+- `ali:masked-exitcode` (note):
   Commands of the form `mkdir ... && rsync ...` are an often-copy-pasted pattern in alidist recipes.
   This is usually used to install Modulefiles.
   However, this line does not behave correctly if the `mkdir` fails: in that case, the `rsync` is silently skipped.

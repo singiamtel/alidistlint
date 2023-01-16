@@ -16,19 +16,18 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
                      1 + rel_column + script.column_offset)
 
     for script in scripts.values():
-        modulefile_required = (
-            not script.is_system_requirement and
-            script.key_name is None and
-            not os.path.basename(script.orig_file_name).startswith('defaults-')
-        )
-        if modulefile_required and \
-           b'alibuild-generate-module' not in script.content and \
-           b'#%Module' not in script.content:
+        is_defaults_recipe = os.path.basename(script.orig_file_name) \
+                                    .startswith('defaults-')
+        modulefile_required = script.key_name is None and \
+            not script.is_system_requirement and not is_defaults_recipe
+        if modulefile_required and b'#%Module' not in script.content and \
+           b'alibuild-generate-module' not in script.content:
             human_key_name = script.key_name or 'main recipe'
             yield make_error(
-                f'{human_key_name} must create a Modulefile; use alibuild-'
+                f'{human_key_name} should create a Modulefile; use alibuild-'
                 'generate-module or add a "#%Module1.0" comment to your '
                 'manually-created Modulefile', 'missing-modulefile', 0, 0,
+                'info',   # Some packages don't need a Modulefile.
             )
 
         # Non-trivial scripts should start with the proper shebang. This lets
@@ -62,7 +61,7 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
             if match:
                 yield make_error(
                     'DYLD_LIBRARY_PATH is ignored on recent MacOS versions',
-                    'dyld-library-path', lineno, match.start(), 'warning',
+                    'dyld-library-path', lineno, match.start(), 'info',
                 )
 
             # The following is a common (often copy-pasted) pattern in recipes:
@@ -74,5 +73,5 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
                 yield make_error(
                     '"mkdir && rsync" ignores errors if "mkdir" fails; '
                     'prefer writing the commands on separate lines',
-                    'masked-exitcode', lineno, line.find(b'&&'), 'warning',
+                    'masked-exitcode', lineno, line.find(b'&&'), 'info',
                 )

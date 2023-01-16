@@ -29,6 +29,9 @@ def yamllint(headers: dict[str, YAMLFilePart]) -> Iterable[Error]:
             # Force 2-space indents. By default, yamllint only checks for
             # consistent indent width *within the file*, not across files.
             'indentation': {'spaces': 2, 'level': 'warning'},
+            # Require no spaces before colons and one space after, but it's not
+            # that critical.
+            'colons': {'level': 'warning'},
             # YAML headers don't have a '---' line at the beginning.
             'document-start': 'disable',
             # Empty values are null, which we don't want.
