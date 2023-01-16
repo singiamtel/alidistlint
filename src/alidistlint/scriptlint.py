@@ -57,10 +57,12 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
             # DYLD_LIBRARY_PATH when launching children processes, making it
             # completely irrelevant. aliBuild handles rpaths in macOS builds,
             # and any bugs should be fixed there.
-            if re.search(br'(^\s*unset\s+)DYLD_LIBRARY_PATH\>', line):
-                yield make_error('setting DYLD_LIBRARY_PATH is pointless',
-                                 'dyld-library-path', lineno,
-                                 line.find(b'DYLD_LIBRARY_PATH'), 'warning')
+            match = re.search(br'(?!^\s*unset\s+)DYLD_LIBRARY_PATH\b', line)
+            if match:
+                yield make_error(
+                    'DYLD_LIBRARY_PATH is ignored on recent MacOS versions',
+                    'dyld-library-path', lineno, match.start(), 'warning',
+                )
 
             # The following is a common (often copy-pasted) pattern in recipes:
             #   mkdir -p $INSTALLROOT/etc/modulefiles &&
