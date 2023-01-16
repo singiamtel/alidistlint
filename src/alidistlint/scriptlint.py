@@ -1,6 +1,7 @@
 '''Internal linter checking build recipe scripts for alidistlint.'''
 
 from collections.abc import Iterable
+import itertools as it
 import os.path
 import re
 
@@ -10,7 +11,7 @@ from alidistlint.common import Error, ScriptFilePart
 def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
     '''Apply alidist-specific linting rules to build scripts.'''
     def make_error(message: str, code: str, rel_line: int, rel_column: int,
-                   level: str = 'error') -> Error:
+                   level: str) -> Error:
         return Error(level, f'{message} [ali:{code}]', script.orig_file_name,
                      1 + rel_line + script.line_offset,
                      1 + rel_column + script.column_offset)
@@ -47,11 +48,24 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
         for lineno, line in enumerate(script.content.splitlines()):
             # Modules 4 does not allow having colons in prepend-path anymore
             prepend_path_pos = line.find(b'prepend-path')
-            if prepend_path_pos != -1 and line.find(b':', prepend_path_pos) != -1:
-                yield make_error(
-                    'Modules 4 does not allow colons in prepend-path',
-                    'colons-prepend-path', lineno, prepend_path_pos,
-                )
+            if prepend_path_pos != -1:
+                # "prepend-path PATH $::env(FOO)/bin" is fine!
+                # Find all colons that are part of any "$::" on this line and
+                # whitelist them.
+                colons_allowed = frozenset(it.chain(*(
+                    (match.start() + 1, match.start() + 2)
+                    for match in re.finditer(br'\$::', line)
+                    if match.start() > prepend_path_pos
+                )))
+                # If any colons on this line are *not* whitelisted, show an
+                # error.
+                colons = {match.start() for match in re.finditer(b':', line)
+                          if match.start() > prepend_path_pos}
+                for colon_pos in colons - colons_allowed:
+                    yield make_error(
+                        'Modules 4 does not allow colons in prepend-path',
+                        'colons-prepend-path', lineno, colon_pos, 'error',
+                    )
 
             # This should really be cleaned up, since macOS cleans any
             # DYLD_LIBRARY_PATH when launching children processes, making it
