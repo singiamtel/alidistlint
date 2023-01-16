@@ -51,18 +51,17 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
             # Modules 4 does not allow having colons in prepend-path anymore
             prepend_path_pos = line.find(b'prepend-path')
             if prepend_path_pos != -1:
+                line_tail = line[prepend_path_pos:]
                 # "prepend-path PATH $::env(FOO)/bin" is fine!
                 # Find all colons that are part of any "$::" on this line and
                 # whitelist them.
                 colons_allowed = frozenset(it.chain(*(
                     (match.start() + 1, match.start() + 2)
-                    for match in re.finditer(br'\$::', line)
-                    if match.start() > prepend_path_pos
+                    for match in re.finditer(br'\$::', line_tail)
                 )))
                 # If any colons on this line are *not* whitelisted, show an
                 # error.
-                colons = {match.start() for match in re.finditer(b':', line)
-                          if match.start() > prepend_path_pos}
+                colons = {m.start() for m in re.finditer(b':', line_tail)}
                 for colon_pos in colons - colons_allowed:
                     yield make_error(
                         'Modules 4 does not allow colons in prepend-path',
