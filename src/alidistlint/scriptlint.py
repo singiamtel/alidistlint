@@ -1,4 +1,4 @@
-'''Internal linter checking build recipe scripts for alidistlint.'''
+"""Internal linter checking build recipe scripts for alidistlint."""
 
 from collections.abc import Iterable
 import itertools as it
@@ -9,7 +9,7 @@ from alidistlint.common import Error, ScriptFilePart
 
 
 def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
-    '''Apply alidist-specific linting rules to build scripts.'''
+    """Apply alidist-specific linting rules to build scripts."""
     def make_error(message: str, code: str, rel_line: int, rel_column: int,
                    level: str) -> Error:
         return Error(level, f'{message} [ali:{code}]', script.orig_file_name,
@@ -41,8 +41,10 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
                 script.content.startswith(b'#!')
         ) and not script.content.startswith(b'#!/bin/bash -e\n'):
             yield make_error(
-                'invalid or missing script shebang; use "#!/bin/bash -e" to '
-                'match aliBuild script runner', 'bad-shebang', 0, 0, 'info',
+                ('Invalid' if script.content.startswith(b'#!') else 'Missing')
+                + ' script shebang. Use exactly "#!/bin/bash -e" to match '
+                'aliBuild environment. You may see spurious errors until you '
+                'fix the shebang.', 'bad-shebang', 0, 0, 'info',
             )
 
         for lineno, line in enumerate(script.content.splitlines()):
