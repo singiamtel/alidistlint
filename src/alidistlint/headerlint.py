@@ -179,9 +179,13 @@ def emit_validation_errors(error_tree: ValidationErrorTree,
     """Parse any validation errors from a cerberus validator."""
     if isinstance(error_tree, dict):
         for key, suberrors in error_tree.items():
+            if re.fullmatch(r'(all|any|none|one)of definition [0-9]+', key):
+                subpath = path
+            else:
+                subpath = path + (key,)
             yield from emit_validation_errors(
                 suberrors, tagged_validated_object, file_name,
-                line_offset, column_offset, path + (key,),
+                line_offset, column_offset, subpath,
             )
     elif isinstance(error_tree, list):
         for subtree in error_tree:

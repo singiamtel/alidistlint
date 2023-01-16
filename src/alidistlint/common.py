@@ -245,7 +245,8 @@ def position_of_key(tagged_object: dict,
     elif isinstance(cur_object_parent, list):
         direct_parent = cur_object_parent[-1]
     else:
-        raise TypeError(cur_object_parent)
+        raise TypeError(f'expected dict or list; got {cur_object_parent!r} '
+                        f'of type {type(cur_object_parent).__name__}')
     try:
         mark = direct_parent[path[-1]]
         return mark.line + 1, mark.column + 1
