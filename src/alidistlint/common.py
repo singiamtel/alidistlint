@@ -176,7 +176,23 @@ def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
         recipe = input_file.read()
         # Get the first byte of the '---\n' line (excluding the prev newline).
         separator_position = recipe.find(b'\n---\n') + 1
+        # If the separator isn't present, yaml_text will be empty.
+        # parse_yaml_header_tagged checks for this.
         yaml_text = recipe[:separator_position]
+
+        # aliBuild splits header from recipe on '---', NOT '\n---\n'! This
+        # means we must not have any '---' string anywhere in the YAML header.
+        if b'---' in yaml_text:
+            for lineno, line in enumerate(yaml_text.splitlines()):
+                dashes_pos = line.find(b'---')
+                if dashes_pos != -1:
+                    errors.append(Error(
+                        'error', 'found "---" in YAML header; this prevents '
+                        'aliBuild from parsing this recipe [ali:parse]',
+                        input_file.name, lineno + 1,
+                        column=dashes_pos + 1, end_column=dashes_pos + 4,
+                    ))
+
         parsed_yaml = parse_yaml_header_tagged(yaml_text, input_file.name, 0, 0)
         if isinstance(parsed_yaml, Error):
             errors.append(parsed_yaml)
