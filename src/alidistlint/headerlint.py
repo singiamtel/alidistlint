@@ -2,18 +2,18 @@
 
 import re
 import os.path
-from typing import Any, Iterable
+from typing import Any, Iterable, Union
 
 from cerberus import Validator
 
 from alidistlint.common import Error, YAMLFilePart, TrackedLocationLoader, \
     position_of_key
 
-ValidationErrors = list[str | dict[Any, 'ValidationErrors']]
-ValidationErrorTree = str | dict[Any, ValidationErrors] | ValidationErrors
+ValidationErrors = list[Union[str, dict[Any, 'ValidationErrors']]]
+ValidationErrorTree = Union[str, dict[Any, ValidationErrors], ValidationErrors]
 """An error tree as produced by cerberus."""
 
-ObjectPath = tuple[str | int, ...]
+ObjectPath = tuple[Union[str, int], ...]
 """Specifies where in a nested object a value is located as a series of keys.
 
 For instance, A is at path (0, "a") in the object [{"a": A}].

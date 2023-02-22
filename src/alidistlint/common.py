@@ -2,6 +2,7 @@
 
 """Lint alidist recipes using yamllint and shellcheck."""
 
+from __future__ import annotations
 import os.path
 from typing import BinaryIO, Callable, Iterable, NamedTuple, Sequence
 
