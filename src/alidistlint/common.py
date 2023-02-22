@@ -3,8 +3,9 @@
 """Lint alidist recipes using yamllint and shellcheck."""
 
 from __future__ import annotations
+import io
 import os.path
-from typing import BinaryIO, StringIO, Callable, Iterable, NamedTuple, Sequence
+from typing import Callable, Iterable, NamedTuple, Sequence
 
 import yaml
 
@@ -164,7 +165,8 @@ def parse_yaml_header_tagged(yaml_text: bytes, orig_file_name: str,
     return parsed_yaml
 
 
-def split_files(temp_dir: str, input_files: Iterable[BinaryIO | StringIO]) \
+def split_files(temp_dir: str,
+                input_files: Iterable[io.BufferedReader | io.TextIOWrapper]) \
         -> tuple[Sequence[Error],
                  dict[str, YAMLFilePart],
                  dict[str, ScriptFilePart]]:
@@ -174,10 +176,15 @@ def split_files(temp_dir: str, input_files: Iterable[BinaryIO | StringIO]) \
     script_parts: dict[str, ScriptFilePart] = {}
     for input_file in input_files:
         orig_basename = os.path.basename(input_file.name)
+        try:
+            # We may have got stdin as an input file. That doesn't get passed
+            # through argparse's FileType, so it's still a string stream, not a
+            # binary stream.
+            input_file = input_file.buffer
+        except AttributeError:
+            # If input_file has no .buffer attribute, it's probably binary.
+            pass
         recipe = input_file.read()
-        if isinstance(recipe, str):
-            # input_file was a StringIO, not a BinaryIO. Probably we got stdin.
-            recipe = recipe.encode('utf-8')
         # Get the first byte of the '---\n' line (excluding the prev newline).
         separator_position = recipe.find(b'\n---\n') + 1
         # If the separator isn't present, yaml_text will be empty.

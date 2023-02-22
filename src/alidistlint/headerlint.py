@@ -26,7 +26,9 @@ def get_schema_for_file(file_name: str) -> dict:
         basename = os.path.basename(file_name)
         if not isinstance(value, str):
             error(field, 'must be a string')
-        elif f'{value.lower()}.sh' != basename:
+        elif basename != '<stdin>' and f'{value.lower()}.sh' != basename:
+            # If basename is '<stdin>', we probably got '-' as an input file,
+            # i.e. stdin. In that case we don't know the original file name.
             error(field, f'must match the file name {basename!r} '
                   'case-insensitively, excluding the .sh')
 
