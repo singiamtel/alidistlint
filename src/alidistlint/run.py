@@ -7,7 +7,11 @@ import sys
 import tempfile
 from typing import NoReturn
 
-from alidistlint import common, scriptlint, yamllint, shellcheck, headerlint
+from alidistlint import common, __version__
+from alidistlint.headerlint import headerlint
+from alidistlint.scriptlint import scriptlint
+from alidistlint.yamllint import yamllint
+from alidistlint.shellcheck import shellcheck
 
 
 def run_with_args(args: Namespace) -> int:
@@ -19,10 +23,10 @@ def run_with_args(args: Namespace) -> int:
         errors, headers, scripts = common.split_files(tempdir, args.recipes)
         errors = itertools.chain(
             errors,
-            () if args.no_headerlint else headerlint.headerlint(headers),
-            () if args.no_scriptlint else scriptlint.scriptlint(scripts),
-            () if args.no_yamllint else yamllint.yamllint(headers),
-            () if args.no_shellcheck else shellcheck.shellcheck(scripts),
+            () if args.no_headerlint else headerlint(headers),
+            () if args.no_scriptlint else scriptlint(scripts),
+            () if args.no_yamllint else yamllint(headers),
+            () if args.no_shellcheck else shellcheck(scripts),
         )
         for error in errors:
             print(formatter(error))
@@ -37,6 +41,7 @@ def parse_args() -> Namespace:
     selected. If any messages with "error" severity were produced,
     `alidistlint` exits with a non-zero exit code.
     ''')
+    parser.add_argument('--version', action='version', version=__version__)
     parser.add_argument('-S', '--no-shellcheck', action='store_true',
                         help="don't run shellcheck on each script")
     parser.add_argument('-L', '--no-scriptlint', action='store_true',
