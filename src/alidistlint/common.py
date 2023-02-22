@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 import os.path
-from typing import BinaryIO, Callable, Iterable, NamedTuple, Sequence
+from typing import BinaryIO, StringIO, Callable, Iterable, NamedTuple, Sequence
 
 import yaml
 
@@ -164,7 +164,7 @@ def parse_yaml_header_tagged(yaml_text: bytes, orig_file_name: str,
     return parsed_yaml
 
 
-def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
+def split_files(temp_dir: str, input_files: Iterable[BinaryIO | StringIO]) \
         -> tuple[Sequence[Error],
                  dict[str, YAMLFilePart],
                  dict[str, ScriptFilePart]]:
@@ -175,6 +175,9 @@ def split_files(temp_dir: str, input_files: Iterable[BinaryIO]) \
     for input_file in input_files:
         orig_basename = os.path.basename(input_file.name)
         recipe = input_file.read()
+        if isinstance(recipe, str):
+            # input_file was a StringIO, not a BinaryIO. Probably we got stdin.
+            recipe = recipe.encode('utf-8')
         # Get the first byte of the '---\n' line (excluding the prev newline).
         separator_position = recipe.find(b'\n---\n') + 1
         # If the separator isn't present, yaml_text will be empty.
