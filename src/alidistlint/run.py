@@ -29,8 +29,14 @@ def run_with_args(args: Namespace) -> int:
             () if args.no_shellcheck else shellcheck(scripts),
         )
         for error in errors:
-            print(formatter(error))
             have_error |= error.level == 'error'
+            try:
+                print(formatter(error))
+            except BrokenPipeError:
+                # Carry on looking for errors for our exit code, then quit.
+                if not have_error:
+                    have_error |= any(e.level == 'error' for e in errors)
+                break
     return 1 if have_error else 0
 
 
