@@ -34,11 +34,13 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
         # Non-trivial scripts should start with the proper shebang. This lets
         # shellcheck know that we use "bash -e" to run scripts.
         if not is_defaults_recipe and not script.is_system_requirement and (
-                # For small recipes (like system_requirement_check), this is
-                # probably more annoying than useful.
-                script.key_name in (None, 'incremental_recipe') or
                 # If the script already has a shebang, make sure it's correct.
-                script.content.startswith(b'#!')
+                script.content.startswith(b'#!') or
+                # The "main" script should always have a shebang.
+                script.key_name is None or
+                # For small scripts (like system_requirement_check), this is
+                # probably more annoying than useful. 4 lines is arbitrary.
+                script.content.strip().count(b'\n') >= 3
         ) and not script.content.startswith(b'#!/bin/bash -e\n'):
             yield make_error(
                 ('Invalid' if script.content.startswith(b'#!') else 'Missing')
