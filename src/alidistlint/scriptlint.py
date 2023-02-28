@@ -85,8 +85,7 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
             #   mkdir -p $INSTALLROOT/etc/modulefiles &&
             #   rsync -a --delete etc/modulefiles/ $INSTALLROOT/etc/modulefiles
             # However, the && just silently skips the rsync if the mkdir fails.
-            if re.search(br'^[^#]*mkdir\s+.*etc/modulefiles\s*&&\s*'
-                         br'rsync\s+.*etc/modulefiles', line):
+            if re.search(br'^[^#]*mkdir\s+.*&&\s*rsync\s+', line):
                 yield make_error(
                     '"mkdir && rsync" ignores errors if "mkdir" fails; '
                     'prefer writing the commands on separate lines',
