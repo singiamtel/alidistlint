@@ -2,6 +2,16 @@
 
 `alidistlint` runs [shellcheck][] on the scripts in [alidist][] recipes and [yamllint][] on their YAML headers, in addition to its own validation and checks on the YAML header and scripts in the recipe.
 
+## Installation
+
+To install `alidistlint`, run:
+
+```bash
+pip install --user alidistlint
+```
+
+You should also install [yamllint][] and [shellcheck][], though this is optional.
+
 ## Usage
 
 Run `alidistlint -h` to get more information about its arguments.
