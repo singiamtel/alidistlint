@@ -93,3 +93,13 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
                     'prefer writing the commands on separate lines',
                     'masked-exitcode', lineno, line.find(b'&&'), 'info',
                 )
+
+            manual_modulefile_pos = line.find(b'#%Module')
+            if manual_modulefile_pos != -1 and \
+               b'alibuild-generate-module' not in script.content:
+                human_key_name = script.key_name or 'main recipe'
+                yield make_error(
+                    'Modulefile created manually here; consider using '
+                    'alibuild-generate-module', 'consider-a-g-m',
+                    lineno, manual_modulefile_pos, 'info',
+                )
