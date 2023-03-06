@@ -32,7 +32,7 @@ name = "Timo Wilken"
 email = "timo.wilken@cern.ch"
 
 [project.urls]
-Homepage = "https://github.com/TimoWilken/alidistlint"
+Homepage = "https://github.com/alisw/alidistlint"
 
 [build-system]
 requires = ["setuptools>=61.0", "setuptools_scm[toml]>=6.2"]
