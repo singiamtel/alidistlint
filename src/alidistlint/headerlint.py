@@ -43,7 +43,16 @@ def get_schema_for_file(file_name: str) -> dict:
             except re.error as exc:
                 error(field, f'invalid architecture regex after colon: {exc}')
 
+    def no_colons_in_path(field, value, error):
+        if not isinstance(value, str):
+            # Don't make this an error, as the value could be a list.
+            return
+        if ':' in value:
+            error(field, 'path elements must not contain colons; make them '
+                  'list items instead')
+
     def environment_schema(allow_list_values=False):
+        path_element = {'type': 'string', 'check_with': no_colons_in_path}
         return {
             'type': 'dict',
             'keysrules': {
@@ -52,8 +61,8 @@ def get_schema_for_file(file_name: str) -> dict:
             },
             'valuesrules': {
                 'anyof': [
-                    {'type': 'string'},
-                    {'type': 'list', 'schema': {'type': 'string'}},
+                    path_element,
+                    {'type': 'list', 'schema': path_element},
                 ],
             } if allow_list_values else {'type': 'string'},
         }
