@@ -242,7 +242,7 @@ def split_files(temp_dir: str,
             if isinstance(recipe_key, str) and
             (recipe_key.endswith('_recipe') or recipe_key.endswith('_check'))
         ), (
-            # Overridden recipes in replacement specs, including overridden
+            # Overridden recipes in replacement specs, excluding overridden
             # main recipe.
             (('prefer_system_replacement_specs',
               replacement_spec_name, recipe_key), recipe)
@@ -250,10 +250,18 @@ def split_files(temp_dir: str,
             in parsed_yaml.get('prefer_system_replacement_specs', {}).items()
             for recipe_key, recipe in replacement_spec.items()
             if isinstance(recipe_key, str) and (
-                    recipe_key == 'recipe' or
                     recipe_key.endswith('_recipe') or
                     recipe_key.endswith('_check')
             )
+        ), (
+            # Overridden main recipe -- always include this, even if only with
+            # its default value, so that users are informed about shortcomings
+            # in the default value (e.g. missing modulefiles).
+            (('prefer_system_replacement_specs', replacement_spec_name, 'recipe'),
+             replacement_spec.get('recipe', '#!/bin/bash -e\n'))
+            for replacement_spec_name, replacement_spec
+            in parsed_yaml.get('prefer_system_replacement_specs', {}).items()
+            if replacement_spec_name != '_locations'
         ))
         for recipe_path, recipe in shell_recipes:
             line_offset, column_offset = position_of_key(parsed_yaml, recipe_path)
@@ -296,6 +304,9 @@ def position_of_key(tagged_object: dict,
     try:
         mark = direct_parent[path[-1]]
         return mark.line + 1, mark.column + 1
-    except KeyError:
-        # The key is not present, but probably required.
+    except IndexError:    # from path[-1]
+        # We got an empty path, so return the start of the top-level object.
         return 1, 0
+    except KeyError:      # from direct_parent[last_path_component]
+        # The key is not present. Return the location of its parent instead.
+        return position_of_key(tagged_object, path[:-1])
