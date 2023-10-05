@@ -19,11 +19,13 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
     for script in scripts.values():
         is_defaults_recipe = os.path.basename(script.orig_file_name) \
                                     .startswith('defaults-')
-        modulefile_required = script.key_name is None and \
-            not script.is_system_requirement and not is_defaults_recipe
+        modulefile_required = (
+            not script.key_path or            # this is the main recipe
+            script.key_path[-1] == 'recipe'   # overridden main recipe
+        ) and not script.is_system_requirement and not is_defaults_recipe
         if modulefile_required and b'#%Module' not in script.content and \
            b'alibuild-generate-module' not in script.content:
-            human_key_name = script.key_name or 'main recipe'
+            human_key_name = '.'.join(script.key_path) or 'main recipe'
             yield make_error(
                 f'{human_key_name} should create a Modulefile; use alibuild-'
                 'generate-module or add a "#%Module1.0" comment to your '
@@ -37,7 +39,8 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
                 # If the script already has a shebang, make sure it's correct.
                 script.content.startswith(b'#!') or
                 # The "main" script should always have a shebang.
-                script.key_name is None or
+                not script.key_path or              # this is the main recipe
+                script.key_path[-1] == 'recipe' or  # overridden main recipe
                 # For small scripts (like system_requirement_check), this is
                 # probably more annoying than useful. 4 lines is arbitrary.
                 script.content.strip().count(b'\n') >= 3
@@ -97,7 +100,7 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
             manual_modulefile_pos = line.find(b'#%Module')
             if manual_modulefile_pos != -1 and \
                b'alibuild-generate-module' not in script.content:
-                human_key_name = script.key_name or 'main recipe'
+                human_key_name = '.'.join(script.key_path) or 'main recipe'
                 yield make_error(
                     'Modulefile created manually here; consider using '
                     'alibuild-generate-module', 'consider-a-g-m',

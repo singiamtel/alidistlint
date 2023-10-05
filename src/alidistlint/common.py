@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 import io
+import itertools
 import os.path
 from typing import Callable, Iterable, NamedTuple, Sequence
 
@@ -47,7 +48,7 @@ class ScriptFilePart(NamedTuple):
     line_offset: int
     column_offset: int
     content: bytes
-    key_name: str | None   # None means "this is the main recipe"
+    key_path: tuple[str, ...]   # empty tuple means "this is the main recipe"
     is_system_requirement: bool
 
 
@@ -184,7 +185,8 @@ def split_files(temp_dir: str,
         except AttributeError:
             # If input_file has no .buffer attribute, it's probably binary.
             pass
-        recipe = input_file.read()
+        recipe: bytes = input_file.read()
+        assert isinstance(recipe, bytes), type(recipe)
         # Get the first byte of the '---\n' line (excluding the prev newline).
         separator_position = recipe.find(b'\n---\n') + 1
         # If the separator isn't present, yaml_text will be empty.
@@ -204,10 +206,12 @@ def split_files(temp_dir: str,
                         column=dashes_pos + 1, end_column=dashes_pos + 4,
                     ))
 
-        parsed_yaml = parse_yaml_header_tagged(yaml_text, input_file.name, 0, 0)
-        if isinstance(parsed_yaml, Error):
-            errors.append(parsed_yaml)
+        yaml_or_err = parse_yaml_header_tagged(yaml_text, input_file.name, 0, 0)
+        if isinstance(yaml_or_err, Error):
+            errors.append(yaml_or_err)
             parsed_yaml = None
+        else:
+            parsed_yaml = yaml_or_err
 
         # Extract the complete YAML header and store it for later parsing.
         with open(f'{temp_dir}/{orig_basename}.head.yaml', 'wb') as headerf:
@@ -224,21 +228,35 @@ def split_files(temp_dir: str,
             scriptf.write(script)
             script_parts[scriptf.name] = ScriptFilePart(
                 # Add 1 to line offset for the separator line.
-                input_file.name, yaml_text.count(b'\n') + 1, 0, script, None,
+                input_file.name, yaml_text.count(b'\n') + 1, 0, script, (),
                 is_system_requirement,
             )
 
         # Extract recipes embedded in YAML header, e.g. incremental_recipe.
         if parsed_yaml is None:
             continue
-        for recipe_key, recipe in parsed_yaml.items():
-            if not isinstance(recipe_key, str):
-                continue
-            if not (recipe_key.endswith('_recipe') or
-                    recipe_key.endswith('_check')):
-                continue
-            line_offset, column_offset = position_of_key(parsed_yaml,
-                                                         (recipe_key,))
+        shell_recipes = itertools.chain((
+            # Top-level recipe keys.
+            ((recipe_key,), recipe)
+            for recipe_key, recipe in parsed_yaml.items()
+            if isinstance(recipe_key, str) and
+            (recipe_key.endswith('_recipe') or recipe_key.endswith('_check'))
+        ), (
+            # Overridden recipes in replacement specs, including overridden
+            # main recipe.
+            (('prefer_system_replacement_specs',
+              replacement_spec_name, recipe_key), recipe)
+            for replacement_spec_name, replacement_spec
+            in parsed_yaml.get('prefer_system_replacement_specs', {}).items()
+            for recipe_key, recipe in replacement_spec.items()
+            if isinstance(recipe_key, str) and (
+                    recipe_key == 'recipe' or
+                    recipe_key.endswith('_recipe') or
+                    recipe_key.endswith('_check')
+            )
+        ))
+        for recipe_path, recipe in shell_recipes:
+            line_offset, column_offset = position_of_key(parsed_yaml, recipe_path)
             line_offset += 1     # assume values start on a new line
             line_offset -= 1     # first line is 1, but this is an offset
             column_offset += 2   # yamllint requires 2-space indents
@@ -250,12 +268,13 @@ def split_files(temp_dir: str,
                     input_file.name, line_offset, column_offset,
                 ))
                 continue
-            with open(f'{temp_dir}/{orig_basename}.{recipe_key}.sh', 'w',
+            clean_recipe_key = '.'.join(recipe_path).replace('/', '')
+            with open(f'{temp_dir}/{orig_basename}.{clean_recipe_key}.sh', 'w',
                       encoding='utf-8') as scriptf:
                 scriptf.write(recipe)
                 script_parts[scriptf.name] = ScriptFilePart(
                     input_file.name, line_offset, column_offset,
-                    recipe.encode('utf-8'), recipe_key, is_system_requirement,
+                    recipe.encode('utf-8'), recipe_path, is_system_requirement,
                 )
 
     return errors, header_parts, script_parts

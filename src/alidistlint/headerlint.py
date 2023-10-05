@@ -113,8 +113,9 @@ def get_schema_for_file(file_name: str) -> dict:
     environment = environment_schema(allow_list_values=False)
     path_environment = environment_schema(allow_list_values=True)
 
-    # This contains most keys, and can be used in other packages' override:.
-    override_package = {
+    # This contains the common fields allowed in both override: and
+    # prefer_system_replacement_specs: members.
+    basic_fields = {
         'version': {'type': 'string', 'check_with': is_valid_version_string},
         'tag': {'type': 'string'},
         'source': git_url,
@@ -127,8 +128,32 @@ def get_schema_for_file(file_name: str) -> dict:
         'append_path': path_environment,
         'force_rebuild': {'type': 'boolean'},
         'incremental_recipe': {'type': 'string'},
+        'relocate_paths': {
+            'type': 'list',
+            'schema': {
+                'type': 'string',
+                'check_with': is_relative_toplevel_path,
+            },
+        },
+    }
+
+    # This contains most keys, and can be used in other packages' override:.
+    override_package = {
+        **basic_fields,
         'prefer_system': {'type': 'string', 'check_with': is_valid_regex},
         'prefer_system_check': {'type': 'string'},
+        'prefer_system_replacement_specs': {
+            'type': 'dict',
+            # The p_s_check needs to output "alibuild_system_replace: <token>".
+            'dependencies': ('prefer_system_check',),
+            # Forbid leading and trailing whitespace. It can never be matched,
+            # since the ab_s_replace: token is str.strip'ed.
+            'keysrules': {'type': 'string', 'regex': r'^\S(.*\S)?$'},
+            'valuesrules': {
+                'type': 'dict',
+                'schema': {**basic_fields, 'recipe': {'type': 'string'}},
+            },
+        },
         'system_requirement': {
             'type': 'string',
             'check_with': is_valid_regex,
@@ -141,13 +166,6 @@ def get_schema_for_file(file_name: str) -> dict:
         'system_requirement_missing': {
             'type': 'string',
             'dependencies': ('system_requirement',),
-        },
-        'relocate_paths': {
-            'type': 'list',
-            'schema': {
-                'type': 'string',
-                'check_with': is_relative_toplevel_path,
-            },
         },
     }
 
@@ -265,9 +283,43 @@ def headerlint(headers: dict[str, YAMLFilePart]) -> Iterable[Error]:
                 header.line_offset, header.column_offset,
             )
 
+        replacement_specs = header.content.get('prefer_system_replacement_specs', {})
+        prefer_sys_check = header.content.get('prefer_system_check', '')
+        spec_selector = 'alibuild_system_replace:'
+
         # Make sure the order of the most important keys is correct.
         yield from check_keys_order(header.content, header.orig_file_name,
                                     header.line_offset, header.column_offset)
         for override_data in header.content.get('overrides', {}).values():
             yield from check_keys_order(override_data, header.orig_file_name,
                                         header.line_offset, header.column_offset)
+        for repl_spec in replacement_specs.values():
+            yield from check_keys_order(repl_spec, header.orig_file_name,
+                                        header.line_offset, header.column_offset)
+
+        # If we define replacement specs, the prefer_system_check should
+        # select one to use.
+        if replacement_specs and spec_selector not in prefer_sys_check:
+            line, column = position_of_key(header.content,
+                                           ('prefer_system_check',))
+            yield Error(
+                'warning', 'when using prefer_system_replacement_specs, '
+                f'select the right one by printing "{spec_selector} <token>" '
+                'in prefer_system_check [ali:replacement-specs]',
+                header.orig_file_name,
+                line + header.line_offset, column + header.column_offset,
+            )
+
+        # If we select a replacement spec in the prefer_system_check, some
+        # specs should be defined. We don't check the name that is echoed,
+        # since it may contain bash variable interpolation, etc.
+        if not replacement_specs and spec_selector in prefer_sys_check:
+            line, column = position_of_key(header.content,
+                                           ('prefer_system_replacement_specs',))
+            yield Error(
+                'warning', f'when printing "{spec_selector} <token>" in '
+                'prefer_system_check, matching replacement specs should be '
+                'defined in prefer_system_replacement_specs '
+                '[ali:replacement-specs]', header.orig_file_name,
+                line + header.line_offset, column + header.column_offset,
+            )
