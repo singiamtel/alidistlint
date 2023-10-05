@@ -96,6 +96,11 @@ There is currently no way to disable individual checks.
   The `package`, `version` and `tag` keys were not found in the correct order.
   These keys should be the first in the file, in the above order (if present).
   Additionally, the `requires` key must come before `build_requires`.
+- `ali:replacement-specs` (warning):
+  Either the `prefer_system_check` seems to select a replacement spec, but
+  none are defined using the `prefer_system_replacement_specs` key, or
+  replacement specs are defined, but none are ever selected by the
+  `prefer_system_check`.
 
 ## GitHub Actions integration
 
