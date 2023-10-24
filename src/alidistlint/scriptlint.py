@@ -52,7 +52,8 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
                 'fix the shebang.', 'bad-shebang', 0, 0, 'info',
             )
 
-        for lineno, line in enumerate(script.content.splitlines()):
+        lines = script.content.splitlines()
+        for lineno, line in enumerate(lines):
             # Modules 4 does not allow having colons in prepend-path anymore
             prepend_path_pos = line.find(b'prepend-path')
             if prepend_path_pos != -1:
@@ -90,7 +91,10 @@ def scriptlint(scripts: dict[str, ScriptFilePart]) -> Iterable[Error]:
             #   mkdir -p $INSTALLROOT/etc/modulefiles &&
             #   rsync -a --delete etc/modulefiles/ $INSTALLROOT/etc/modulefiles
             # However, the && just silently skips the rsync if the mkdir fails.
-            if re.search(br'^[^#]*mkdir\s+.*&&\s*rsync\s+', line):
+            # If this is the last line in the recipe, it's not a problem,
+            # since that line determines the overall exit code.
+            if lineno < len(lines) - 1 and \
+               re.search(br'^[^#]*mkdir\s+.*&&\s*rsync\s+', line):
                 yield make_error(
                     '"mkdir && rsync" ignores errors if "mkdir" fails; '
                     'prefer writing the commands on separate lines',
