@@ -124,6 +124,7 @@ def get_schema_for_file(file_name: str) -> dict:
         'build_requires': requires,
         'env': environment,
         'valid_defaults': {'type': 'list', 'schema': {'type': 'string'}},
+        'tools': {'type': 'list', 'schema': {'type': 'string'}},
         'prepend_path': path_environment,
         'append_path': path_environment,
         'force_rebuild': {'type': 'boolean'},
