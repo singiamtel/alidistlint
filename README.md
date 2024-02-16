@@ -7,23 +7,33 @@
 To install `alidistlint`, run:
 
 ```bash
-pip install --user alidistlint
+python3 -m pip install --user alidistlint
 ```
 
 You should also install [yamllint][] and [shellcheck][], though this is optional.
+
+If you want to use the `--changes` flag, install its dependencies like this:
+
+```bash
+python3 -m pip install --user 'alidistlint[git]'
+```
 
 ## Usage
 
 Run `alidistlint -h` to get more information about its arguments.
 
 ```
-usage: alidistlint [-h] [-S] [-Y] [-H] [-f FORMAT] RECIPE [RECIPE ...]
+usage: alidistlint [-h] [-S] [-Y] [-H] [-f FORMAT] [--changes COMMITS] RECIPE [RECIPE ...]
 ```
 
 You can disable individual checkers using `-S`/`--no-shellcheck` and `-Y`/`--no-yamllint` for external linters, or `-L`/`--no-scriptlint` and `-H`/`--no-headerlint` for `alidistlint`'s built-in linters.
 By default, all checkers are run.
 
 Optionally, select the output format of errors using `-f`/`--format`.
+
+You can also make `alidistlint` limit the warnings it outputs to those that apply to changed code between the given commits.
+Errors are always shown, even if they apply to unchanged lines.
+This can be useful in CI, to gradually transition to using this linter.
 
 Finally, pass one or multiple files to be checked to `alidistlint`.
 You can use `-` for the standard input here, but be aware that this will produce spurious errors, as file names are meaningful for alidist recipes.
