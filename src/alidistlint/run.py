@@ -40,10 +40,12 @@ def run_with_args(args: Namespace) -> int:
             # --changes was given.
             show_error = (
                 error.level == 'error' or
-                error.file_name == '<stdin>' or
-                changed_lines is None or
-                (os.path.relpath(error.file_name, repo_dir),
-                 error.line) in changed_lines
+                not args.errors_only and (
+                    changed_lines is None or
+                    error.file_name == '<stdin>' or
+                    (os.path.relpath(error.file_name, repo_dir),
+                     error.line) in changed_lines
+                )
             )
             if not show_error:
                 continue
@@ -73,10 +75,13 @@ def parse_args() -> Namespace:
     repository, including and uncommitted changes.
     ''')
     parser.add_argument('--version', action='version', version=__version__)
-    parser.add_argument('--changes', default=None, metavar='COMMITS',
-                        help=('output warnings only for added lines between '
-                              '%(metavar)s (e.g. "master..HEAD"); errors are '
-                              'always shown.'))
+    selector = parser.add_mutually_exclusive_group()
+    selector.add_argument('-e', '--errors-only', action='store_true',
+                          help='only output the most critical messages')
+    selector.add_argument('--changes', default=None, metavar='COMMITS',
+                          help=('output warnings and notes only for added lines '
+                                'between %(metavar)s (e.g. "master..HEAD"); '
+                                'errors are always shown.'))
     parser.add_argument('-S', '--no-shellcheck', action='store_true',
                         help="don't run shellcheck on each script")
     parser.add_argument('-L', '--no-scriptlint', action='store_true',

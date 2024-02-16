@@ -23,7 +23,7 @@ python3 -m pip install --user 'alidistlint[git]'
 Run `alidistlint -h` to get more information about its arguments.
 
 ```
-usage: alidistlint [-h] [-S] [-Y] [-H] [-f FORMAT] [--changes COMMITS] RECIPE [RECIPE ...]
+usage: alidistlint [-h] [-S] [-Y] [-H] [-f FORMAT] [-e | --changes COMMITS] RECIPE [RECIPE ...]
 ```
 
 You can disable individual checkers using `-S`/`--no-shellcheck` and `-Y`/`--no-yamllint` for external linters, or `-L`/`--no-scriptlint` and `-H`/`--no-headerlint` for `alidistlint`'s built-in linters.
@@ -31,7 +31,10 @@ By default, all checkers are run.
 
 Optionally, select the output format of errors using `-f`/`--format`.
 
-You can also make `alidistlint` limit the warnings it outputs to those that apply to changed code between the given commits.
+You can also make `alidistlint` limit the warnings and notes it outputs.
+Use the `-e`/`--errors-only` option to omit them entirely, and only show critical error messages.
+
+Alternatively, you can limit non-critical messages to those that apply to changed code between the given commits using the `--changes` option.
 Errors are always shown, even if they apply to unchanged lines.
 This can be useful in CI, to gradually transition to using this linter.
 
