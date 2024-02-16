@@ -19,6 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+git = ["pygit2"]
 linters = [
   "yamllint",
   # "shellcheck",    # shellcheck is not Python, so can't depend on it here.

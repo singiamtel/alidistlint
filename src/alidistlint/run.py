@@ -7,7 +7,7 @@ import sys
 import tempfile
 from typing import NoReturn
 
-from alidistlint import common, __version__
+from alidistlint import common, git, __version__
 from alidistlint.headerlint import headerlint
 from alidistlint.scriptlint import scriptlint
 from alidistlint.yamllint import yamllint
@@ -19,6 +19,12 @@ def run_with_args(args: Namespace) -> int:
     formatter = common.ERROR_FORMATTERS[args.format]
     progname = os.path.basename(sys.argv[0])
     have_error = False
+    repo_dir = changed_lines = None
+    if git.AVAILABLE:
+        repo_dir = git.find_repository(f.name for f in args.recipes)
+    if repo_dir is not None and args.changes is not None:
+        changed_lines = git.added_lines(repo_dir, args.changes)
+
     with tempfile.TemporaryDirectory(prefix=progname) as tempdir:
         errors, headers, scripts = common.split_files(tempdir, args.recipes)
         errors = itertools.chain(
@@ -30,6 +36,17 @@ def run_with_args(args: Namespace) -> int:
         )
         for error in errors:
             have_error |= error.level == 'error'
+            # Always show errors, but hide warnings for non-changed lines if
+            # --changes was given.
+            show_error = (
+                error.level == 'error' or
+                error.file_name == '<stdin>' or
+                changed_lines is None or
+                (os.path.relpath(error.file_name, repo_dir),
+                 error.line) in changed_lines
+            )
+            if not show_error:
+                continue
             try:
                 print(formatter(error))
             except BrokenPipeError:
@@ -45,9 +62,21 @@ def parse_args() -> Namespace:
     parser = ArgumentParser(description=__doc__, epilog='''\
     Errors and warnings will be printed to standard output in the format you
     selected. If any messages with "error" severity were produced,
-    `alidistlint` exits with a non-zero exit code.
+    alidistlint exits with a non-zero exit code.
+
+    If pygit2 is installed, alidistlint can limit its output only to that
+    which applies to code that was changes between two commits in the alidist
+    repository. The --changes option takes git commit ranges. Use e.g.
+    --changes=master..HEAD (or --changes=master..) to check the difference
+    between the master branch and the current commit; or --changes=master to
+    show the difference between master and the current state of the
+    repository, including and uncommitted changes.
     ''')
     parser.add_argument('--version', action='version', version=__version__)
+    parser.add_argument('--changes', default=None, metavar='COMMITS',
+                        help=('output warnings only for added lines between '
+                              '%(metavar)s (e.g. "master..HEAD"); errors are '
+                              'always shown.'))
     parser.add_argument('-S', '--no-shellcheck', action='store_true',
                         help="don't run shellcheck on each script")
     parser.add_argument('-L', '--no-scriptlint', action='store_true',
@@ -63,7 +92,10 @@ def parse_args() -> Namespace:
     parser.add_argument('recipes', metavar='RECIPE', nargs='+',
                         type=FileType('rb'),
                         help='a file name to check (use - for stdin)')
-    return parser.parse_args()
+    args = parser.parse_args()
+    if not git.AVAILABLE and args.changes is not None:
+        parser.error('pygit2 is not installed; cannot use --changes')
+    return args
 
 
 def main() -> NoReturn:
