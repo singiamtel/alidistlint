@@ -152,7 +152,7 @@ def get_schema_for_file(file_name: str) -> dict:
             'keysrules': {'type': 'string', 'regex': r'^\S(.*\S)?$'},
             'valuesrules': {
                 'type': 'dict',
-                'schema': {**basic_fields, 'recipe': {'type': 'string'}},
+                'schema': {**basic_fields, 'recipe': {'type': 'string'}, 'key': {'type': 'string'}},
             },
         },
         'system_requirement': {
