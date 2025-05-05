@@ -73,7 +73,7 @@ def get_schema_for_file(file_name: str) -> dict:
             _ = value % {key: 'placeholder' for key in (
                 'branch_basename', 'branch_stream', 'commit_hash',
                 'short_hash', 'tag', 'tag_basename', 'defaults_upper',
-                'year', 'month', 'day', 'hour',
+                'year', 'month', 'day', 'hour', 'key',
             )}
         except KeyError as exc:
             error(field, f'substitution variable {exc} is invalid')
@@ -152,7 +152,7 @@ def get_schema_for_file(file_name: str) -> dict:
             'keysrules': {'type': 'string', 'regex': r'^\S(.*\S)?$'},
             'valuesrules': {
                 'type': 'dict',
-                'schema': {**basic_fields, 'recipe': {'type': 'string'}, 'key': {'type': 'string'}},
+                'schema': {**basic_fields, 'recipe': {'type': 'string'}},
             },
         },
         'system_requirement': {
