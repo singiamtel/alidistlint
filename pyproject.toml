@@ -4,7 +4,7 @@ description = "A code linter for alidist packages"
 dynamic = ["version"]
 readme = "README.md"
 # We need __future__.annotations (3.7+).
-requires-python = ">=3.7"
+requires-python = ">=3.9"
 classifiers = [
   "Programming Language :: Python :: 3",
   "License :: OSI Approved :: GNU General Public License v3 (GPLv3)",
