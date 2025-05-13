@@ -155,6 +155,7 @@ def get_schema_for_file(file_name: str) -> dict:
                 'schema': {**basic_fields, 'recipe': {'type': 'string'}},
             },
         },
+        'allow_system_package_upload': {'type': 'boolean'},
         'system_requirement': {
             'type': 'string',
             'check_with': is_valid_regex,
